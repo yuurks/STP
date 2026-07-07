@@ -16,7 +16,8 @@ const commands = [
       sc.setName("remove").setDescription("Remove a ticker from the watchlist")
         .addStringOption(o => o.setName("ticker").setDescription("Stock ticker or crypto pair to remove").setRequired(true))
     )
-    .addSubcommand(sc => sc.setName("list").setDescription("Show the current watchlist")),
+    .addSubcommand(sc => sc.setName("list").setDescription("Show the current watchlist"))
+    .addSubcommand(sc => sc.setName("clear").setDescription("Remove every ticker from the watchlist")),
 
   new SlashCommandBuilder()
     .setName("scan")

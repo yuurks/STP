@@ -12,6 +12,24 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 const PACING_MS = 1000;
 const sleep = ms => new Promise(res => setTimeout(res, ms));
 
+// Discord messages cap out at 2000 characters. Defensive: even if a watchlist somehow grows
+// huge, never build a reply that Discord will reject -- truncate and say how much got cut off.
+const DISCORD_MESSAGE_LIMIT = 2000;
+function formatTickerList(tickers) {
+  if (!tickers.length) return "(empty)";
+  let joined = tickers.join(", ");
+  if (joined.length <= DISCORD_MESSAGE_LIMIT - 50) return joined;
+  let shown = 0;
+  let out = "";
+  for (const t of tickers) {
+    const next = out ? `${out}, ${t}` : t;
+    if (next.length > DISCORD_MESSAGE_LIMIT - 50) break;
+    out = next;
+    shown++;
+  }
+  return `${out} (+${tickers.length - shown} more)`;
+}
+
 async function runScan(guildId) {
   const guild = watchlist.getGuild(guildId);
   const results = [];
@@ -62,17 +80,31 @@ client.on(Events.InteractionCreate, async interaction => {
         const sub = interaction.options.getSubcommand();
         if (sub === "add") {
           const ticker = interaction.options.getString("ticker");
+          if (!watchlist.isValidTicker(ticker)) {
+            await interaction.reply({
+              content: "That doesn't look like a valid ticker — use a short symbol like `AAPL` or a pair like `BTC/USD`, not a list or free text.",
+              ephemeral: true
+            });
+            break;
+          }
           const tickers = watchlist.addTicker(interaction.guildId, ticker);
-          await interaction.reply(`Added **${watchlist.normalizeSymbol(ticker)}**. Watchlist: ${tickers.join(", ")}`);
+          await interaction.reply(`Added **${watchlist.normalizeSymbol(ticker)}**. Watchlist: ${formatTickerList(tickers)}`);
         } else if (sub === "remove") {
           const ticker = interaction.options.getString("ticker");
+          if (!watchlist.isValidTicker(ticker)) {
+            await interaction.reply({ content: "That doesn't look like a valid ticker.", ephemeral: true });
+            break;
+          }
           const tickers = watchlist.removeTicker(interaction.guildId, ticker);
-          await interaction.reply(`Removed **${watchlist.normalizeSymbol(ticker)}**. Watchlist: ${tickers.join(", ") || "(empty)"}`);
+          await interaction.reply(`Removed **${watchlist.normalizeSymbol(ticker)}**. Watchlist: ${formatTickerList(tickers)}`);
         } else if (sub === "list") {
           const guild = watchlist.getGuild(interaction.guildId);
           await interaction.reply(
-            guild.tickers.length ? `Watching: ${guild.tickers.join(", ")}` : "Watchlist is empty — add one with `/watch add`."
+            guild.tickers.length ? `Watching: ${formatTickerList(guild.tickers)}` : "Watchlist is empty — add one with `/watch add`."
           );
+        } else if (sub === "clear") {
+          watchlist.clearTickers(interaction.guildId);
+          await interaction.reply("Watchlist cleared.");
         }
         break;
       }

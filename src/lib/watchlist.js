@@ -15,6 +15,18 @@ function normalizeSymbol(input) {
   return s; // plain stock ticker, e.g. AAPL
 }
 
+// Real tickers/pairs are short and only ever use these characters. This guards against
+// someone pasting a whole list (or any other junk) into the ticker field, which would
+// otherwise get stored as one giant "ticker" and blow past Discord's 2000-char message limit.
+const MAX_SYMBOL_LENGTH = 20;
+const VALID_SYMBOL = /^[A-Z0-9.\/-]+$/;
+
+function isValidTicker(input) {
+  if (typeof input !== "string") return false;
+  const s = input.trim();
+  return s.length > 0 && s.length <= MAX_SYMBOL_LENGTH && VALID_SYMBOL.test(s.toUpperCase());
+}
+
 function loadAll() {
   if (!fs.existsSync(DATA_FILE)) return {};
   try {
@@ -57,6 +69,14 @@ function removeTicker(guildId, ticker) {
   return guild.tickers;
 }
 
+function clearTickers(guildId) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.tickers = [];
+  saveAll(all);
+  return guild.tickers;
+}
+
 function setAutoscan(guildId, channelId, intervalMinutes) {
   const all = loadAll();
   const guild = ensureGuild(all, guildId);
@@ -78,6 +98,6 @@ function allGuildsWithAutoscan() {
 }
 
 module.exports = {
-  getGuild, addTicker, removeTicker, setAutoscan, markAutoscanRun, allGuildsWithAutoscan,
-  normalizeSymbol
+  getGuild, addTicker, removeTicker, clearTickers, setAutoscan, markAutoscanRun, allGuildsWithAutoscan,
+  normalizeSymbol, isValidTicker
 };
