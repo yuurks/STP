@@ -60,6 +60,18 @@ function addTicker(guildId, ticker) {
   return guild.tickers;
 }
 
+// Adds several tickers in one load/save cycle instead of one file write per ticker.
+function addTickers(guildId, tickers) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  for (const ticker of tickers) {
+    const normalized = normalizeSymbol(ticker);
+    if (!guild.tickers.includes(normalized)) guild.tickers.push(normalized);
+  }
+  saveAll(all);
+  return guild.tickers;
+}
+
 function removeTicker(guildId, ticker) {
   const all = loadAll();
   const guild = ensureGuild(all, guildId);
@@ -98,6 +110,6 @@ function allGuildsWithAutoscan() {
 }
 
 module.exports = {
-  getGuild, addTicker, removeTicker, clearTickers, setAutoscan, markAutoscanRun, allGuildsWithAutoscan,
+  getGuild, addTicker, addTickers, removeTicker, clearTickers, setAutoscan, markAutoscanRun, allGuildsWithAutoscan,
   normalizeSymbol, isValidTicker
 };

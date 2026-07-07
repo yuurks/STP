@@ -9,8 +9,8 @@ const commands = [
     .setName("watch")
     .setDescription("Manage this server's scanner watchlist")
     .addSubcommand(sc =>
-      sc.setName("add").setDescription("Add a ticker or crypto pair to the watchlist")
-        .addStringOption(o => o.setName("ticker").setDescription("e.g. AAPL, or a crypto pair like BTC/USD or BTC-USD").setRequired(true))
+      sc.setName("add").setDescription("Add one or more tickers/crypto pairs to the watchlist")
+        .addStringOption(o => o.setName("ticker").setDescription("e.g. AAPL, or BTC/USD -- comma or space separated for multiple, up to 50").setRequired(true))
     )
     .addSubcommand(sc =>
       sc.setName("remove").setDescription("Remove a ticker from the watchlist")

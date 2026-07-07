@@ -72,7 +72,7 @@ npm start
 
 | Command | What it does |
 |---|---|
-| `/watch add ticker:AAPL` | Add a ticker to this server's watchlist. Also accepts crypto pairs like `BTC/USD` or `BTC-USD` |
+| `/watch add ticker:AAPL` | Add tickers to this server's watchlist. Accepts crypto pairs like `BTC/USD` or `BTC-USD`, and multiple at once, comma or space separated (up to 50) |
 | `/watch remove ticker:AAPL` | Remove one |
 | `/watch list` | Show the current watchlist |
 | `/watch clear` | Remove every ticker from the watchlist |

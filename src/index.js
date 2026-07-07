@@ -79,16 +79,33 @@ client.on(Events.InteractionCreate, async interaction => {
       case "watch": {
         const sub = interaction.options.getSubcommand();
         if (sub === "add") {
-          const ticker = interaction.options.getString("ticker");
-          if (!watchlist.isValidTicker(ticker)) {
+          const input = interaction.options.getString("ticker");
+          const candidates = input.split(/[\s,]+/).filter(Boolean);
+
+          const MAX_PER_CALL = 50;
+          if (candidates.length > MAX_PER_CALL) {
             await interaction.reply({
-              content: "That doesn't look like a valid ticker — use a short symbol like `AAPL` or a pair like `BTC/USD`, not a list or free text.",
+              content: `That's ${candidates.length} tickers in one go — please add at most ${MAX_PER_CALL} at a time.`,
               ephemeral: true
             });
             break;
           }
-          const tickers = watchlist.addTicker(interaction.guildId, ticker);
-          await interaction.reply(`Added **${watchlist.normalizeSymbol(ticker)}**. Watchlist: ${formatTickerList(tickers)}`);
+
+          const valid = candidates.filter(c => watchlist.isValidTicker(c));
+          const invalid = candidates.filter(c => !watchlist.isValidTicker(c));
+
+          if (!valid.length) {
+            await interaction.reply({
+              content: "None of that looked like a valid ticker — use short symbols like `AAPL` or pairs like `BTC/USD`, comma or space separated.",
+              ephemeral: true
+            });
+            break;
+          }
+
+          const tickers = watchlist.addTickers(interaction.guildId, valid);
+          const addedNote = `Added ${valid.length} ticker${valid.length === 1 ? "" : "s"}.`;
+          const skippedNote = invalid.length ? ` Skipped ${invalid.length} invalid: ${formatTickerList(invalid)}.` : "";
+          await interaction.reply(`${addedNote}${skippedNote} Watchlist: ${formatTickerList(tickers)}`);
         } else if (sub === "remove") {
           const ticker = interaction.options.getString("ticker");
           if (!watchlist.isValidTicker(ticker)) {
