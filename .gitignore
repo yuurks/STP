@@ -1,0 +1,4 @@
+node_modules/
+.env
+data/watchlists.json
+.claude/settings.local.json
