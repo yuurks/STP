@@ -110,6 +110,13 @@ npm start
   prior day's high/low with no trading in between. Shown as how far price still has to move,
   and in which direction, to trade back through that level. This is a purely mechanical
   reading of the candle data, not a prediction that the gap will actually get filled.
+- **Signal confidence filter**: a Buy/Sell verdict only survives if it's backed by both a real
+  trend (ADX >= 20, Wilder's own threshold for "trending" vs. "range-bound") and above-average
+  volume (20-day average). Otherwise it's downgraded to Neutral with a note explaining why, so
+  `/alerts` stays quiet on crossovers that fire during a choppy, low-conviction market. This
+  trades quantity for quality — expect noticeably fewer Buy/Sell verdicts than before. It does
+  **not** make signals more likely to be profitable, only less likely to be a false positive
+  from a well-known failure mode (crossover indicators whipsawing in sideways markets).
 - **No order execution**: this only posts signals. Turning any of this into real trades would
   require a brokerage API (e.g. Alpaca, Interactive Brokers) and is a meaningfully bigger,
   higher-stakes project than a signal bot -- build and paper-test a strategy thoroughly first.

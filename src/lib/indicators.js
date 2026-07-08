@@ -83,6 +83,86 @@ function bollinger(closes, period = 20, mult = 2) {
   return { mid, upper, lower };
 }
 
+// Wilder's Average Directional Index: measures trend *strength*, independent of direction.
+// Below ~20 is Wilder's own convention for "no real trend" -- the classic failure mode for
+// moving-average-crossover systems is firing on a crossover during a range-bound market.
+function adx(rows, period = 14) {
+  const n = rows.length;
+  const tr = [0], plusDM = [0], minusDM = [0];
+
+  for (let i = 1; i < n; i++) {
+    const highDiff = rows[i].high - rows[i - 1].high;
+    const lowDiff = rows[i - 1].low - rows[i].low;
+    plusDM.push(highDiff > lowDiff && highDiff > 0 ? highDiff : 0);
+    minusDM.push(lowDiff > highDiff && lowDiff > 0 ? lowDiff : 0);
+    tr.push(Math.max(
+      rows[i].high - rows[i].low,
+      Math.abs(rows[i].high - rows[i - 1].close),
+      Math.abs(rows[i].low - rows[i - 1].close)
+    ));
+  }
+
+  // Wilder's smoothing: first value is a plain sum of the first `period` entries, then each
+  // later value rolls the previous one forward (prev - prev/period + current).
+  const smooth = arr => {
+    const out = new Array(n).fill(null);
+    if (period >= n) return out;
+    out[period] = arr.slice(1, period + 1).reduce((a, b) => a + b, 0);
+    for (let i = period + 1; i < n; i++) {
+      out[i] = out[i - 1] - out[i - 1] / period + arr[i];
+    }
+    return out;
+  };
+
+  const trS = smooth(tr), plusDMS = smooth(plusDM), minusDMS = smooth(minusDM);
+
+  const dx = new Array(n).fill(null);
+  for (let i = period; i < n; i++) {
+    if (!trS[i]) continue;
+    const plusDI = 100 * (plusDMS[i] / trS[i]);
+    const minusDI = 100 * (minusDMS[i] / trS[i]);
+    const diSum = plusDI + minusDI;
+    dx[i] = diSum ? 100 * Math.abs(plusDI - minusDI) / diSum : 0;
+  }
+
+  const out = new Array(n).fill(null);
+  let sum = 0, count = 0;
+  for (let i = period; i < n; i++) {
+    if (dx[i] == null) continue;
+    if (count < period) {
+      sum += dx[i];
+      count++;
+      if (count === period) out[i] = sum / period;
+    } else {
+      out[i] = (out[i - 1] * (period - 1) + dx[i]) / period;
+    }
+  }
+  return out;
+}
+
+// Downgrades an otherwise-actionable verdict to Neutral when it isn't backed by a real trend
+// (weak ADX) or above-average volume -- the two most common causes of a false crossover signal.
+// Leaves the raw score/notes alone and just appends why it got suppressed, so /scan still shows
+// what almost fired.
+const ADX_TREND_THRESHOLD = 20;
+function applyConfidenceFilter({ score, verdict, notes }, adxValue, lastVolume, avgVolume) {
+  if (verdict === "Neutral") return { score, verdict, notes };
+
+  const reasons = [];
+  if (adxValue == null || adxValue < ADX_TREND_THRESHOLD) {
+    reasons.push(`weak trend, ADX ${adxValue != null ? adxValue.toFixed(0) : "n/a"}`);
+  }
+  if (avgVolume == null || lastVolume < avgVolume) {
+    reasons.push("below-average volume");
+  }
+  if (!reasons.length) return { score, verdict, notes };
+
+  return {
+    score, verdict: "Neutral",
+    notes: [...notes, `Signal suppressed (${verdict}) — ${reasons.join(", ")}`]
+  };
+}
+
 // score -> verdict thresholds, shared everywhere
 function verdictFromScore(score) {
   if (score >= 4) return "Strong Buy";
@@ -192,10 +272,15 @@ function analyze(rows) {
   }));
 
   const n = enriched.length - 1;
-  const { score, verdict, notes } = scoreAt(enriched, n);
+  const raw = scoreAt(enriched, n);
+
+  const adxData = adx(rows, 14);
+  const avgVolumeData = sma(rows.map(r => r.volume), 20);
+  const filtered = applyConfidenceFilter(raw, adxData[n], rows[n].volume, avgVolumeData[n]);
+
   return {
-    rows: enriched, score, verdict, notes, last: enriched[n],
-    volatility: volatility(closes), gap: findUnfilledGap(rows)
+    rows: enriched, ...filtered, last: enriched[n],
+    volatility: volatility(closes), gap: findUnfilledGap(rows), adx: adxData[n]
   };
 }
 
