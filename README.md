@@ -68,6 +68,19 @@ This only needs to run once (Discord rate-limits how often an avatar can change)
 npm start
 ```
 
+### 6. (Optional) Run the test suite
+
+```bash
+npm test
+```
+
+Uses Node's built-in test runner (`node --test`, no extra dependency). Covers the pure math in
+`src/lib/indicators.js` -- `findUnfilledGap`, `atr`, `adx`, and `backtest` (including a real
+no-lookahead check, not just a hand-wave: it runs two otherwise-identical price series that only
+diverge after a cutoff day, and asserts every signal evaluated before that day produces an
+identical verdict regardless of what happens afterward). It doesn't cover the Discord-facing
+code in `index.js` -- that still needs to be exercised by hand in a real server.
+
 ## Commands
 
 | Command | What it does |

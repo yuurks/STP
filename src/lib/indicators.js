@@ -358,7 +358,7 @@ function backtest(rows, forwardDays = 5) {
     };
   });
 
-  return { forwardDays, totalSignals: signals.length, summary };
+  return { forwardDays, totalSignals: signals.length, summary, signals };
 }
 
-module.exports = { analyze, scoreAt, verdictFromScore, verdictSide, findUnfilledGap, backtest };
+module.exports = { analyze, scoreAt, verdictFromScore, verdictSide, findUnfilledGap, backtest, atr, adx };
