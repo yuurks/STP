@@ -55,6 +55,13 @@ const commands = [
         .addIntegerOption(o => o.setName("interval_minutes").setDescription("How often to check for changes, in minutes (default: fastest your watchlist size allows)").setRequired(false))
     )
     .addSubcommand(sc => sc.setName("off").setDescription("Turn off signal alerts"))
+    .addSubcommand(sc => sc.setName("history").setDescription("See how past alerts actually performed (needs ~5 days since they fired)")),
+
+  new SlashCommandBuilder()
+    .setName("backtest")
+    .setDescription("Replay this bot's own signals over one ticker's history to see how they'd have done")
+    .addStringOption(o => o.setName("ticker").setDescription("Ticker or crypto pair, e.g. AAPL or BTC/USD").setRequired(true))
+    .addIntegerOption(o => o.setName("forward_days").setDescription("Days forward to measure each signal's return, 1-20 (default 5)").setRequired(false))
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);

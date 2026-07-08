@@ -24,6 +24,15 @@ function gapLine(gap) {
   return `\nGap to fill: $${gap.distance.toFixed(2)} (${gap.pct.toFixed(1)}%) ${gap.direction} to $${gap.level.toFixed(2)}`;
 }
 
+// A suggested stop-loss at 2x ATR from the close, sized to the ticker's own typical range
+// rather than a flat percentage. A starting point, not a guarantee -- blank on Neutral/no ATR.
+function stopLossLine(r) {
+  if (!r.atr || r.verdict === "Neutral") return "";
+  const isBuySide = r.verdict.includes("Buy");
+  const stopPrice = isBuySide ? r.last.close - 2 * r.atr : r.last.close + 2 * r.atr;
+  return `\nSuggested stop (2x ATR): $${Math.max(0, stopPrice).toFixed(2)}`;
+}
+
 function scanEmbed(results) {
   const sorted = [...results].sort((a, b) => b.score - a.score);
   const embed = new EmbedBuilder()
@@ -36,7 +45,7 @@ function scanEmbed(results) {
   sorted.slice(0, 25).forEach(r => {
     embed.addFields({
       name: `${r.symbol} · $${r.last.close.toFixed(2)} — ${r.verdict}`,
-      value: `Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}`,
+      value: `Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}${stopLossLine(r)}`,
       inline: false
     });
   });
@@ -55,7 +64,7 @@ function alertEmbed(fired) {
   fired.forEach(r => {
     embed.addFields({
       name: `${r.symbol} · $${r.last.close.toFixed(2)} — ${r.verdict}`,
-      value: `Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}`,
+      value: `Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}${stopLossLine(r)}`,
       inline: false
     });
   });
@@ -75,7 +84,7 @@ function volatilityEmbed(results) {
   sorted.slice(0, 25).forEach(r => {
     embed.addFields({
       name: `${r.symbol} · $${r.last.close.toFixed(2)} — ${r.volatility.toFixed(1)}% daily volatility`,
-      value: `${r.verdict} · Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}`,
+      value: `${r.verdict} · Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}${stopLossLine(r)}`,
       inline: false
     });
   });
@@ -83,4 +92,43 @@ function volatilityEmbed(results) {
   return embed;
 }
 
-module.exports = { scanEmbed, alertEmbed, volatilityEmbed, logoAttachment, VERDICT_COLOR };
+function summaryFields(embed, summary, label) {
+  summary
+    .sort((a, b) => b.count - a.count)
+    .forEach(s => {
+      embed.addFields({
+        name: `${s.verdict} · ${s.count} signal${s.count === 1 ? "" : "s"}`,
+        value: `Win rate: ${s.winRate.toFixed(0)}% · Avg return ${label}: ${s.avgReturn >= 0 ? "+" : ""}${s.avgReturn.toFixed(2)}%`,
+        inline: false
+      });
+    });
+}
+
+function backtestEmbed(symbol, result) {
+  const embed = new EmbedBuilder()
+    .setTitle(`📊 Backtest — ${symbol}`)
+    .setColor(0x8a63d2)
+    .setThumbnail("attachment://logo.png")
+    .setFooter({ text: "Small sample, historical only -- not a guarantee of future results. Not financial advice." })
+    .setTimestamp();
+
+  summaryFields(embed, result.summary, `(${result.forwardDays}-day)`);
+  return embed;
+}
+
+function alertHistoryEmbed(summary, evaluatedCount) {
+  const embed = new EmbedBuilder()
+    .setTitle("📈 Alert History — Real Performance")
+    .setColor(0x8a63d2)
+    .setThumbnail("attachment://logo.png")
+    .setFooter({ text: `${evaluatedCount} past alerts evaluated -- small sample. Not financial advice.` })
+    .setTimestamp();
+
+  summaryFields(embed, summary, "(since firing)");
+  return embed;
+}
+
+module.exports = {
+  scanEmbed, alertEmbed, volatilityEmbed, backtestEmbed, alertHistoryEmbed,
+  logoAttachment, VERDICT_COLOR
+};

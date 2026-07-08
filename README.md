@@ -82,6 +82,8 @@ npm start
 | `/autoscan off` | Turn scheduled scans off |
 | `/alerts on channel:#signals interval_minutes:60` | Check on a schedule, but only post a ticker when its verdict *changes* to Buy/Sell (quiet otherwise). Omit `interval_minutes` to use the fastest interval your watchlist size allows |
 | `/alerts off` | Turn signal alerts off |
+| `/alerts history` | See how past alerts *actually* performed — fetches current prices for alerts at least ~5 days old and reports real win rate / avg return per verdict type |
+| `/backtest ticker:AAPL forward_days:5` | Replay this bot's own signal logic day-by-day over a ticker's history (no lookahead) and report what would have happened `forward_days` later after each signal |
 
 ## Notes and honest limitations
 
@@ -104,7 +106,17 @@ npm start
   entire watchlist rather than merging into it. The 24h-per-server cooldown exists because a
   single large run can eat a large chunk of the daily request quota by itself. Volatility here
   is just the standard deviation of daily % price changes over the fetched window — a measure
-  of how much a ticker moves, not a prediction of which direction it'll move next.
+  of how much a ticker moves, not a prediction of which direction it'll move next. Candidates
+  with a confirmed weak/no trend (ADX < 15) are excluded, since pure volatility with nothing
+  behind it is as often a spike about to mean-revert as it is a real opportunity. When sampling
+  `universe:both`, stocks and crypto are ranked and picked separately rather than pooled into
+  one global ranking — crypto's baseline volatility runs structurally higher than stocks', so a
+  single ranking would crowd out stocks almost every time and leave you with a concentrated,
+  highly-correlated crypto-only watchlist instead of a genuinely diversified one.
+- **Suggested stops**: `/scan`, `/alerts`, and `/watch autobuild` show a suggested stop-loss at
+  2x ATR (Average True Range) from the current price on any Buy/Sell verdict — sized to that
+  ticker's own typical daily range rather than a flat percentage. It's a standard starting point
+  for risk sizing, not a guarantee, and the bot doesn't track whether you'd have actually hit it.
 - **Gap to fill**: every scan (`/scan`, `/alerts`, `/watch autobuild`) also reports the nearest
   unfilled price gap for each ticker, if one exists — a day whose price jumped clean past the
   prior day's high/low with no trading in between. Shown as how far price still has to move,
@@ -117,6 +129,13 @@ npm start
   trades quantity for quality — expect noticeably fewer Buy/Sell verdicts than before. It does
   **not** make signals more likely to be profitable, only less likely to be a false positive
   from a well-known failure mode (crossover indicators whipsawing in sideways markets).
+- **`/backtest` and `/alerts history` are the only things that actually validate this bot** —
+  everything else is textbook indicator theory that sounds reasonable but has never been checked
+  against real outcomes. `/backtest` replays history fast but on necessarily small samples
+  (a single ticker's fetched window rarely produces more than a handful of qualifying signals,
+  given how selective the confidence filter is). `/alerts history` is slower to build up (needs
+  real time to pass) but measures actual forward performance, not a simulation. Neither is
+  statistical proof of anything — treat both as a rough, honest gut-check, not validation.
 - **No order execution**: this only posts signals. Turning any of this into real trades would
   require a brokerage API (e.g. Alpaca, Interactive Brokers) and is a meaningfully bigger,
   higher-stakes project than a signal bot -- build and paper-test a strategy thoroughly first.

@@ -83,38 +83,55 @@ function bollinger(closes, period = 20, mult = 2) {
   return { mid, upper, lower };
 }
 
-// Wilder's Average Directional Index: measures trend *strength*, independent of direction.
-// Below ~20 is Wilder's own convention for "no real trend" -- the classic failure mode for
-// moving-average-crossover systems is firing on a crossover during a range-bound market.
-function adx(rows, period = 14) {
-  const n = rows.length;
-  const tr = [0], plusDM = [0], minusDM = [0];
-
-  for (let i = 1; i < n; i++) {
-    const highDiff = rows[i].high - rows[i - 1].high;
-    const lowDiff = rows[i - 1].low - rows[i].low;
-    plusDM.push(highDiff > lowDiff && highDiff > 0 ? highDiff : 0);
-    minusDM.push(lowDiff > highDiff && lowDiff > 0 ? lowDiff : 0);
+function trueRangeSeries(rows) {
+  const tr = [0];
+  for (let i = 1; i < rows.length; i++) {
     tr.push(Math.max(
       rows[i].high - rows[i].low,
       Math.abs(rows[i].high - rows[i - 1].close),
       Math.abs(rows[i].low - rows[i - 1].close)
     ));
   }
+  return tr;
+}
 
-  // Wilder's smoothing: first value is a plain sum of the first `period` entries, then each
-  // later value rolls the previous one forward (prev - prev/period + current).
-  const smooth = arr => {
-    const out = new Array(n).fill(null);
-    if (period >= n) return out;
-    out[period] = arr.slice(1, period + 1).reduce((a, b) => a + b, 0);
-    for (let i = period + 1; i < n; i++) {
-      out[i] = out[i - 1] - out[i - 1] / period + arr[i];
-    }
-    return out;
-  };
+// Wilder's smoothing: first value is a plain sum of the first `period` entries, then each
+// later value rolls the previous one forward (prev - prev/period + current).
+function wilderSmooth(arr, period) {
+  const n = arr.length;
+  const out = new Array(n).fill(null);
+  if (period >= n) return out;
+  out[period] = arr.slice(1, period + 1).reduce((a, b) => a + b, 0);
+  for (let i = period + 1; i < n; i++) {
+    out[i] = out[i - 1] - out[i - 1] / period + arr[i];
+  }
+  return out;
+}
 
-  const trS = smooth(tr), plusDMS = smooth(plusDM), minusDMS = smooth(minusDM);
+// Average True Range: the standard measure of a ticker's typical bar-to-bar range, used for
+// sizing stops relative to how much a ticker actually moves rather than a fixed dollar/percent.
+function atr(rows, period = 14) {
+  const smoothed = wilderSmooth(trueRangeSeries(rows), period);
+  return smoothed.map(v => (v == null ? null : v / period));
+}
+
+// Wilder's Average Directional Index: measures trend *strength*, independent of direction.
+// Below ~20 is Wilder's own convention for "no real trend" -- the classic failure mode for
+// moving-average-crossover systems is firing on a crossover during a range-bound market.
+function adx(rows, period = 14) {
+  const n = rows.length;
+  const plusDM = [0], minusDM = [0];
+
+  for (let i = 1; i < n; i++) {
+    const highDiff = rows[i].high - rows[i - 1].high;
+    const lowDiff = rows[i - 1].low - rows[i].low;
+    plusDM.push(highDiff > lowDiff && highDiff > 0 ? highDiff : 0);
+    minusDM.push(lowDiff > highDiff && lowDiff > 0 ? lowDiff : 0);
+  }
+
+  const trS = wilderSmooth(trueRangeSeries(rows), period);
+  const plusDMS = wilderSmooth(plusDM, period);
+  const minusDMS = wilderSmooth(minusDM, period);
 
   const dx = new Array(n).fill(null);
   for (let i = period; i < n; i++) {
@@ -280,8 +297,42 @@ function analyze(rows) {
 
   return {
     rows: enriched, ...filtered, last: enriched[n],
-    volatility: volatility(closes), gap: findUnfilledGap(rows), adx: adxData[n]
+    volatility: volatility(closes), gap: findUnfilledGap(rows),
+    adx: adxData[n], atr: atr(rows, 14)[n]
   };
 }
 
-module.exports = { analyze, scoreAt, verdictFromScore, verdictSide, findUnfilledGap };
+// Replays analyze() day by day over already-fetched history and checks what happened
+// `forwardDays` later, to see whether this bot's own signals have actually meant anything.
+// Only ever looks at rows[0..i] when producing the verdict for day i -- same causal analyze()
+// used live, just called repeatedly, so there's no lookahead leaking into the result.
+function backtest(rows, forwardDays = 5) {
+  const MIN_LOOKBACK = 50; // enough bars for SMA50/MACD/ADX/volume-SMA to have real values
+  const signals = [];
+
+  for (let i = MIN_LOOKBACK; i < rows.length - forwardDays; i++) {
+    const { verdict } = analyze(rows.slice(0, i + 1));
+    if (verdict === "Neutral") continue;
+
+    const entry = rows[i].close;
+    const exit = rows[i + forwardDays].close;
+    signals.push({ date: rows[i].date, verdict, forwardReturn: ((exit - entry) / entry) * 100 });
+  }
+
+  const byVerdict = {};
+  for (const s of signals) (byVerdict[s.verdict] ||= []).push(s.forwardReturn);
+
+  const summary = Object.entries(byVerdict).map(([verdict, returns]) => {
+    const isBuySide = verdict.includes("Buy");
+    const wins = returns.filter(r => (isBuySide ? r > 0 : r < 0)).length;
+    return {
+      verdict, count: returns.length,
+      winRate: (wins / returns.length) * 100,
+      avgReturn: returns.reduce((a, b) => a + b, 0) / returns.length
+    };
+  });
+
+  return { forwardDays, totalSignals: signals.length, summary };
+}
+
+module.exports = { analyze, scoreAt, verdictFromScore, verdictSide, findUnfilledGap, backtest };

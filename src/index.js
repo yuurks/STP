@@ -1,11 +1,13 @@
 require("dotenv").config();
 const { Client, GatewayIntentBits, Events } = require("discord.js");
 
-const { analyze } = require("./lib/indicators");
+const { analyze, backtest } = require("./lib/indicators");
 const { fetchDailySeries } = require("./lib/marketData");
 const watchlist = require("./lib/watchlist");
 const universe = require("./lib/universe");
-const { scanEmbed, alertEmbed, volatilityEmbed, logoAttachment } = require("./lib/embeds");
+const {
+  scanEmbed, alertEmbed, volatilityEmbed, backtestEmbed, alertHistoryEmbed, logoAttachment
+} = require("./lib/embeds");
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
@@ -63,7 +65,8 @@ async function runScan(guildId) {
 // the most volatile ones found. Runs detached from the interaction -- with up to 300 candidates
 // at 7.5s pacing this can take well over the 15-minute window Discord gives an interaction to
 // respond, so progress/results are posted as normal channel messages instead of interaction replies.
-async function runAutobuild(guildId, channel, candidates, count) {
+const NO_TREND_ADX = 15;
+async function runAutobuild(guildId, channel, candidates, count, universeChoice) {
   const found = [];
   for (const symbol of candidates) {
     try {
@@ -78,8 +81,33 @@ async function runAutobuild(guildId, channel, candidates, count) {
     await sleep(PACING_MS);
   }
 
-  found.sort((a, b) => b.volatility - a.volatility);
-  const top = found.slice(0, count);
+  // Pure volatility with zero trend behind it is more often a spike about to mean-revert than
+  // a real opportunity -- exclude confirmed no-trend candidates (benefit of the doubt if ADX
+  // couldn't be computed at all rather than excluding on missing data).
+  const eligible = found.filter(f => f.adx == null || f.adx >= NO_TREND_ADX);
+
+  let top;
+  if (universeChoice === "both") {
+    // Crypto's baseline volatility runs structurally higher than stocks', so a single global
+    // ranking crowds out stocks almost every time -- rank each pool separately and blend the
+    // top of each instead, so the result is actually diversified rather than crypto-only.
+    const isCrypto = f => f.symbol.includes("/");
+    const cryptoRanked = eligible.filter(isCrypto).sort((a, b) => b.volatility - a.volatility);
+    const stockRanked = eligible.filter(f => !isCrypto(f)).sort((a, b) => b.volatility - a.volatility);
+    const half = Math.ceil(count / 2);
+    top = [...stockRanked.slice(0, half), ...cryptoRanked.slice(0, count - half)];
+    if (top.length < count) {
+      const used = new Set(top.map(t => t.symbol));
+      const backfill = eligible
+        .filter(f => !used.has(f.symbol))
+        .sort((a, b) => b.volatility - a.volatility)
+        .slice(0, count - top.length);
+      top = [...top, ...backfill];
+    }
+    top.sort((a, b) => b.volatility - a.volatility);
+  } else {
+    top = [...eligible].sort((a, b) => b.volatility - a.volatility).slice(0, count);
+  }
 
   if (!top.length) {
     await channel.send("Volatility scan finished, but no candidates returned usable data — watchlist left unchanged.");
@@ -88,8 +116,54 @@ async function runAutobuild(guildId, channel, candidates, count) {
 
   const tickers = watchlist.replaceTickers(guildId, top.map(t => t.symbol));
   await channel.send({
-    content: `Volatility scan complete: checked ${found.length}/${candidates.length} candidates. Watchlist replaced with the ${tickers.length} most volatile.`,
+    content: `Volatility scan complete: checked ${found.length}/${candidates.length} candidates ` +
+      `(${found.length - eligible.length} excluded for having no real trend). ` +
+      `Watchlist replaced with the ${tickers.length} most volatile.`,
     embeds: [volatilityEmbed(top)],
+    files: [logoAttachment()]
+  });
+}
+
+// Checks back on past logged alerts that are old enough to have a real forward result, fetching
+// each unique symbol's current price once and comparing to the price at the time the alert fired.
+const ALERT_EVAL_MIN_AGE_MS = 5 * 24 * 60 * 60 * 1000; // ~5 trading days, treated loosely as calendar days
+const ALERT_EVAL_MAX_SYMBOLS = 30;
+async function runAlertHistory(channel, eligible) {
+  const uniqueSymbols = [...new Set(eligible.map(h => h.symbol))].slice(0, ALERT_EVAL_MAX_SYMBOLS);
+  const currentPrices = {};
+  for (const symbol of uniqueSymbols) {
+    try {
+      const rows = await fetchDailySeries(symbol, 5);
+      if (rows.length) currentPrices[symbol] = rows[rows.length - 1].close;
+    } catch (err) {
+      console.error(`Alert history lookup failed for ${symbol}: ${err.message}`);
+    }
+    await sleep(PACING_MS);
+  }
+
+  const evaluable = eligible.filter(h => currentPrices[h.symbol] != null);
+  if (!evaluable.length) {
+    await channel.send("Couldn't fetch current prices for any past alerts — try again later.");
+    return;
+  }
+
+  const byVerdict = {};
+  for (const h of evaluable) {
+    const ret = ((currentPrices[h.symbol] - h.price) / h.price) * 100;
+    (byVerdict[h.verdict] ||= []).push(ret);
+  }
+  const summary = Object.entries(byVerdict).map(([verdict, returns]) => {
+    const isBuySide = verdict.includes("Buy");
+    const wins = returns.filter(r => (isBuySide ? r > 0 : r < 0)).length;
+    return {
+      verdict, count: returns.length,
+      winRate: (wins / returns.length) * 100,
+      avgReturn: returns.reduce((a, b) => a + b, 0) / returns.length
+    };
+  });
+
+  await channel.send({
+    embeds: [alertHistoryEmbed(summary, evaluable.length)],
     files: [logoAttachment()]
   });
 }
@@ -138,6 +212,7 @@ client.once(Events.ClientReady, c => {
         const results = await runScan(guildId);
         const fired = findFiredAlerts(guildId, results);
         if (fired.length) {
+          for (const r of fired) watchlist.logAlert(guildId, r.symbol, r.verdict, r.last.close);
           const channel = await client.channels.fetch(channelId);
           await channel.send({ embeds: [alertEmbed(fired)], files: [logoAttachment()] });
         }
@@ -229,7 +304,7 @@ client.on(Events.InteractionCreate, async interaction => {
             `Scanning ${candidates.length} random candidates from the ${universeChoice} pool for volatility — ` +
             `this'll take about ${etaMin} min. I'll post here and replace the watchlist with the top ${count} when done.`
           );
-          runAutobuild(interaction.guildId, interaction.channel, candidates, count).catch(err => {
+          runAutobuild(interaction.guildId, interaction.channel, candidates, count, universeChoice).catch(err => {
             console.error(`Autobuild failed for guild ${interaction.guildId}: ${err.message}`);
             interaction.channel.send("Volatility scan failed partway through — check the bot logs.").catch(() => {});
           });
@@ -299,7 +374,61 @@ client.on(Events.InteractionCreate, async interaction => {
         } else if (sub === "off") {
           watchlist.setAlerts(interaction.guildId, null, null);
           await interaction.reply("Signal alerts turned off.");
+        } else if (sub === "history") {
+          const history = watchlist.getAlertHistory(interaction.guildId);
+          const eligible = history.filter(h => Date.now() - h.timestamp >= ALERT_EVAL_MIN_AGE_MS);
+
+          if (!history.length) {
+            await interaction.reply({ content: "No alerts have fired yet for this server.", ephemeral: true });
+            break;
+          }
+          if (!eligible.length) {
+            await interaction.reply({
+              content: `${history.length} alert(s) logged, but none are old enough yet to evaluate (needs ~5 days since firing).`,
+              ephemeral: true
+            });
+            break;
+          }
+
+          await interaction.reply(`Checking real performance of ${eligible.length} past alert(s)...`);
+          runAlertHistory(interaction.channel, eligible).catch(err => {
+            console.error(`Alert history check failed for guild ${interaction.guildId}: ${err.message}`);
+            interaction.channel.send("Alert history check failed partway through — check the bot logs.").catch(() => {});
+          });
         }
+        break;
+      }
+
+      case "backtest": {
+        await interaction.deferReply();
+        const ticker = interaction.options.getString("ticker");
+        if (!watchlist.isValidTicker(ticker)) {
+          await interaction.editReply("That doesn't look like a valid ticker.");
+          break;
+        }
+        const forwardDays = Math.min(20, Math.max(1, interaction.options.getInteger("forward_days") || 5));
+        const symbol = watchlist.normalizeSymbol(ticker);
+
+        const rows = await fetchDailySeries(symbol, 250);
+        if (rows.length < 70) {
+          await interaction.editReply(`Not enough history for ${symbol} to backtest (need at least ~70 days, got ${rows.length}).`);
+          break;
+        }
+
+        const result = backtest(rows, forwardDays);
+        if (!result.totalSignals) {
+          await interaction.editReply(
+            `No Buy/Sell signals fired for ${symbol} across its available history — nothing to measure. ` +
+            "That's not necessarily bad; the confidence filter is deliberately selective."
+          );
+          break;
+        }
+
+        await interaction.editReply({
+          content: `Replayed ${rows.length} days of ${symbol} history. Small sample sizes are normal here — read this as a rough signal, not proof.`,
+          embeds: [backtestEmbed(symbol, result)],
+          files: [logoAttachment()]
+        });
         break;
       }
     }
