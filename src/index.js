@@ -4,6 +4,7 @@ const { Client, GatewayIntentBits, Events } = require("discord.js");
 const { analyze } = require("./lib/indicators");
 const { fetchDailySeries } = require("./lib/marketData");
 const watchlist = require("./lib/watchlist");
+const universe = require("./lib/universe");
 const { scanEmbed, alertEmbed, logoAttachment } = require("./lib/embeds");
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -56,6 +57,42 @@ async function runScan(guildId) {
     await sleep(PACING_MS);
   }
   return results;
+}
+
+// Scans a candidate pool (not the watchlist) for volatility, then replaces the watchlist with
+// the most volatile ones found. Runs detached from the interaction -- with up to 300 candidates
+// at 7.5s pacing this can take well over the 15-minute window Discord gives an interaction to
+// respond, so progress/results are posted as normal channel messages instead of interaction replies.
+async function runAutobuild(guildId, channel, candidates, count) {
+  const found = [];
+  for (const symbol of candidates) {
+    try {
+      const rows = await fetchDailySeries(symbol);
+      if (rows.length >= 30) {
+        const { volatility: vol } = analyze(rows);
+        found.push({ symbol, volatility: vol });
+      }
+    } catch (err) {
+      console.error(`Autobuild lookup failed for ${symbol}: ${err.message}`);
+    }
+    await sleep(PACING_MS);
+  }
+
+  found.sort((a, b) => b.volatility - a.volatility);
+  const top = found.slice(0, count);
+
+  if (!top.length) {
+    await channel.send("Volatility scan finished, but no candidates returned usable data — watchlist left unchanged.");
+    return;
+  }
+
+  const tickers = watchlist.replaceTickers(guildId, top.map(t => t.symbol));
+  const summary = top.map(t => `${t.symbol} (${t.volatility.toFixed(1)}%)`);
+  await channel.send(
+    `Volatility scan complete: checked ${found.length}/${candidates.length} candidates. ` +
+    `Watchlist replaced with the ${tickers.length} most volatile (daily volatility shown):\n` +
+    formatTickerList(summary)
+  );
 }
 
 // Fires only for tickers whose verdict is actionable (not Neutral) and has changed since the
@@ -164,6 +201,39 @@ client.on(Events.InteractionCreate, async interaction => {
         } else if (sub === "clear") {
           watchlist.clearTickers(interaction.guildId);
           await interaction.reply("Watchlist cleared.");
+        } else if (sub === "autobuild") {
+          const AUTOBUILD_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+          const lastRun = watchlist.getAutobuildLastRun(interaction.guildId);
+          if (lastRun && Date.now() - lastRun < AUTOBUILD_COOLDOWN_MS) {
+            const waitMin = Math.ceil((AUTOBUILD_COOLDOWN_MS - (Date.now() - lastRun)) / 60000);
+            await interaction.reply({
+              content: `Volatility scans are expensive on the free data tier — you can run this again in about ${waitMin} min.`,
+              ephemeral: true
+            });
+            break;
+          }
+
+          const universeChoice = interaction.options.getString("universe") || "both";
+          const sample = Math.min(300, Math.max(10, interaction.options.getInteger("sample") || 100));
+          const count = Math.min(50, Math.max(1, interaction.options.getInteger("count") || 15));
+
+          const pool = universe.loadUniverse(universeChoice);
+          if (!pool.length) {
+            await interaction.reply({ content: "Candidate pool is empty — stocks.txt/crypto.txt may be missing.", ephemeral: true });
+            break;
+          }
+          const candidates = universe.sample(pool, sample);
+          const etaMin = Math.ceil((candidates.length * PACING_MS) / 60000);
+
+          watchlist.markAutobuildRun(interaction.guildId, Date.now());
+          await interaction.reply(
+            `Scanning ${candidates.length} random candidates from the ${universeChoice} pool for volatility — ` +
+            `this'll take about ${etaMin} min. I'll post here and replace the watchlist with the top ${count} when done.`
+          );
+          runAutobuild(interaction.guildId, interaction.channel, candidates, count).catch(err => {
+            console.error(`Autobuild failed for guild ${interaction.guildId}: ${err.message}`);
+            interaction.channel.send("Volatility scan failed partway through — check the bot logs.").catch(() => {});
+          });
         }
         break;
       }

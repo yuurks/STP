@@ -76,6 +76,7 @@ npm start
 | `/watch remove ticker:AAPL` | Remove one |
 | `/watch list` | Show the current watchlist |
 | `/watch clear` | Remove every ticker from the watchlist |
+| `/watch autobuild universe:both sample:100 count:15` | Sample random candidates from `stocks.txt`/`crypto.txt`, rank by recent volatility, and **replace** the watchlist with the most volatile `count` of them. Runs in the background and posts results when done (once per 24h per server) |
 | `/scan` | Run the scanner on the watchlist right now, posts a ranked embed |
 | `/autoscan on channel:#signals interval_minutes:60` | Auto-run `/scan` on a schedule, posting the full ranked watchlist every time. Omit `interval_minutes` to use the fastest interval your watchlist size allows |
 | `/autoscan off` | Turn scheduled scans off |
@@ -98,6 +99,12 @@ npm start
   and only posts when it flips (e.g. Neutral -> Buy). Since indicators are computed from daily
   candles, meaningful changes typically happen at most once a day regardless of how often you
   set it to check.
+- **`/watch autobuild` is expensive and destructive**: it uses one API request per candidate
+  checked (up to 300), can take nearly 40 minutes for a full-size sample, and *replaces* the
+  entire watchlist rather than merging into it. The 24h-per-server cooldown exists because a
+  single large run can eat a large chunk of the daily request quota by itself. Volatility here
+  is just the standard deviation of daily % price changes over the fetched window — a measure
+  of how much a ticker moves, not a prediction of which direction it'll move next.
 - **No order execution**: this only posts signals. Turning any of this into real trades would
   require a brokerage API (e.g. Alpaca, Interactive Brokers) and is a meaningfully bigger,
   higher-stakes project than a signal bot -- build and paper-test a strategy thoroughly first.

@@ -17,7 +17,20 @@ const commands = [
         .addStringOption(o => o.setName("ticker").setDescription("Stock ticker or crypto pair to remove").setRequired(true))
     )
     .addSubcommand(sc => sc.setName("list").setDescription("Show the current watchlist"))
-    .addSubcommand(sc => sc.setName("clear").setDescription("Remove every ticker from the watchlist")),
+    .addSubcommand(sc => sc.setName("clear").setDescription("Remove every ticker from the watchlist"))
+    .addSubcommand(sc =>
+      sc.setName("autobuild").setDescription("Replace the watchlist with the most volatile tickers from a candidate pool")
+        .addStringOption(o =>
+          o.setName("universe").setDescription("Candidate pool to sample from (default: both)").setRequired(false)
+            .addChoices(
+              { name: "Stocks", value: "stocks" },
+              { name: "Crypto", value: "crypto" },
+              { name: "Both", value: "both" }
+            )
+        )
+        .addIntegerOption(o => o.setName("sample").setDescription("How many random candidates to check, 10-300 (default 100)").setRequired(false))
+        .addIntegerOption(o => o.setName("count").setDescription("How many of the most volatile to keep, 1-50 (default 15)").setRequired(false))
+    ),
 
   new SlashCommandBuilder()
     .setName("scan")

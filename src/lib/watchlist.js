@@ -89,6 +89,28 @@ function clearTickers(guildId) {
   return guild.tickers;
 }
 
+// Wholesale swap, used by /watch autobuild to replace the watchlist with a fresh set.
+function replaceTickers(guildId, tickers) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.tickers = [...new Set(tickers.map(normalizeSymbol))];
+  saveAll(all);
+  return guild.tickers;
+}
+
+function getAutobuildLastRun(guildId) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  return guild.autobuildLastRun || null;
+}
+
+function markAutobuildRun(guildId, timestamp) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.autobuildLastRun = timestamp;
+  saveAll(all);
+}
+
 function setAutoscan(guildId, channelId, intervalMinutes) {
   const all = loadAll();
   const guild = ensureGuild(all, guildId);
@@ -145,7 +167,9 @@ function saveVerdicts(guildId, verdicts) {
 }
 
 module.exports = {
-  getGuild, addTicker, addTickers, removeTicker, clearTickers, setAutoscan, markAutoscanRun, allGuildsWithAutoscan,
+  getGuild, addTicker, addTickers, removeTicker, clearTickers, replaceTickers,
+  getAutobuildLastRun, markAutobuildRun,
+  setAutoscan, markAutoscanRun, allGuildsWithAutoscan,
   setAlerts, markAlertsRun, allGuildsWithAlerts, getLastVerdicts, saveVerdicts,
   normalizeSymbol, isValidTicker
 };

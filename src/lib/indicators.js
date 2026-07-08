@@ -130,6 +130,19 @@ function scoreAt(enrichedRows, i) {
   return { score, verdict: verdictFromScore(score), notes };
 }
 
+// stddev of daily % returns over the given closes, as a percentage -- a simple, standard
+// measure of how much a ticker actually moves day to day (higher = more volatile).
+function volatility(closes) {
+  if (closes.length < 2) return 0;
+  const returns = [];
+  for (let i = 1; i < closes.length; i++) {
+    returns.push((closes[i] - closes[i - 1]) / closes[i - 1]);
+  }
+  const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
+  const variance = returns.reduce((a, b) => a + (b - mean) ** 2, 0) / returns.length;
+  return Math.sqrt(variance) * 100;
+}
+
 // full pipeline: raw OHLC rows -> enriched rows + latest score/verdict/notes
 function analyze(rows) {
   const closes = rows.map(r => r.close);
@@ -150,7 +163,7 @@ function analyze(rows) {
 
   const n = enriched.length - 1;
   const { score, verdict, notes } = scoreAt(enriched, n);
-  return { rows: enriched, score, verdict, notes, last: enriched[n] };
+  return { rows: enriched, score, verdict, notes, last: enriched[n], volatility: volatility(closes) };
 }
 
 module.exports = { analyze, scoreAt, verdictFromScore, verdictSide };
