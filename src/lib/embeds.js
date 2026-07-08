@@ -96,9 +96,10 @@ function summaryFields(embed, summary, label) {
   summary
     .sort((a, b) => b.count - a.count)
     .forEach(s => {
+      const stopNote = s.stoppedCount != null ? ` · Stopped out: ${s.stoppedCount}/${s.count}` : "";
       embed.addFields({
         name: `${s.verdict} · ${s.count} signal${s.count === 1 ? "" : "s"}`,
-        value: `Win rate: ${s.winRate.toFixed(0)}% · Avg return ${label}: ${s.avgReturn >= 0 ? "+" : ""}${s.avgReturn.toFixed(2)}%`,
+        value: `Win rate: ${s.winRate.toFixed(0)}% · Avg return ${label}: ${s.avgReturn >= 0 ? "+" : ""}${s.avgReturn.toFixed(2)}%${stopNote}`,
         inline: false
       });
     });
@@ -109,10 +110,10 @@ function backtestEmbed(symbol, result) {
     .setTitle(`📊 Backtest — ${symbol}`)
     .setColor(0x8a63d2)
     .setThumbnail("attachment://logo.png")
-    .setFooter({ text: "Small sample, historical only -- not a guarantee of future results. Not financial advice." })
+    .setFooter({ text: "Stop-aware, small sample, historical only -- not a guarantee of future results. Not financial advice." })
     .setTimestamp();
 
-  summaryFields(embed, result.summary, `(${result.forwardDays}-day)`);
+  summaryFields(embed, result.summary, `(${result.forwardDays}-day, stop-aware)`);
   return embed;
 }
 
@@ -124,7 +125,7 @@ function alertHistoryEmbed(summary, evaluatedCount) {
     .setFooter({ text: `${evaluatedCount} past alerts evaluated -- small sample. Not financial advice.` })
     .setTimestamp();
 
-  summaryFields(embed, summary, "(since firing)");
+  summaryFields(embed, summary, "(since firing, stop-aware)");
   return embed;
 }
 

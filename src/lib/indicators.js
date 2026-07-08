@@ -306,29 +306,55 @@ function analyze(rows) {
 // `forwardDays` later, to see whether this bot's own signals have actually meant anything.
 // Only ever looks at rows[0..i] when producing the verdict for day i -- same causal analyze()
 // used live, just called repeatedly, so there's no lookahead leaking into the result.
+//
+// Stop-aware: walks day-by-day through the forward window and checks whether the same 2x-ATR
+// stop shown in /scan's "Suggested stop" line would have been hit first. If so, the outcome is
+// the stop-level return, not the forwardDays close -- otherwise a signal that spent day 2 down
+// 5% and recovered by day 5 would misreport as a win, when a real stop would have exited it.
 function backtest(rows, forwardDays = 5) {
   const MIN_LOOKBACK = 50; // enough bars for SMA50/MACD/ADX/volume-SMA to have real values
   const signals = [];
 
   for (let i = MIN_LOOKBACK; i < rows.length - forwardDays; i++) {
-    const { verdict } = analyze(rows.slice(0, i + 1));
+    const { verdict, atr: atrValue } = analyze(rows.slice(0, i + 1));
     if (verdict === "Neutral") continue;
 
     const entry = rows[i].close;
-    const exit = rows[i + forwardDays].close;
-    signals.push({ date: rows[i].date, verdict, forwardReturn: ((exit - entry) / entry) * 100 });
+    const isBuySide = verdict.includes("Buy");
+    let forwardReturn = null;
+    let stoppedOut = false;
+
+    if (atrValue) {
+      const stopPrice = isBuySide ? entry - 2 * atrValue : entry + 2 * atrValue;
+      for (let j = i + 1; j <= i + forwardDays; j++) {
+        const hitStop = isBuySide ? rows[j].low <= stopPrice : rows[j].high >= stopPrice;
+        if (hitStop) {
+          forwardReturn = ((stopPrice - entry) / entry) * 100;
+          stoppedOut = true;
+          break;
+        }
+      }
+    }
+
+    if (forwardReturn == null) {
+      const exit = rows[i + forwardDays].close;
+      forwardReturn = ((exit - entry) / entry) * 100;
+    }
+
+    signals.push({ date: rows[i].date, verdict, forwardReturn, stoppedOut });
   }
 
   const byVerdict = {};
-  for (const s of signals) (byVerdict[s.verdict] ||= []).push(s.forwardReturn);
+  for (const s of signals) (byVerdict[s.verdict] ||= []).push(s);
 
-  const summary = Object.entries(byVerdict).map(([verdict, returns]) => {
+  const summary = Object.entries(byVerdict).map(([verdict, entries]) => {
     const isBuySide = verdict.includes("Buy");
-    const wins = returns.filter(r => (isBuySide ? r > 0 : r < 0)).length;
+    const wins = entries.filter(e => (isBuySide ? e.forwardReturn > 0 : e.forwardReturn < 0)).length;
     return {
-      verdict, count: returns.length,
-      winRate: (wins / returns.length) * 100,
-      avgReturn: returns.reduce((a, b) => a + b, 0) / returns.length
+      verdict, count: entries.length,
+      winRate: (wins / entries.length) * 100,
+      avgReturn: entries.reduce((a, e) => a + e.forwardReturn, 0) / entries.length,
+      stoppedCount: entries.filter(e => e.stoppedOut).length
     };
   });
 

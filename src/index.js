@@ -124,46 +124,81 @@ async function runAutobuild(guildId, channel, candidates, count, universeChoice)
   });
 }
 
-// Checks back on past logged alerts that are old enough to have a real forward result, fetching
-// each unique symbol's current price once and comparing to the price at the time the alert fired.
+// Checks back on past logged alerts old enough to have a real forward result. Stop-aware, same
+// as /backtest: fetches each unique symbol's daily range once and walks forward from the alert's
+// fire date, checking whether its 2x-ATR stop (logged at fire time) was hit before now -- scored
+// at the stop price if so, otherwise at the latest available close. Alerts logged before ATR
+// tracking existed (no h.atr) fall back to a plain latest-close-vs-fired-price comparison.
 const ALERT_EVAL_MIN_AGE_MS = 5 * 24 * 60 * 60 * 1000; // ~5 trading days, treated loosely as calendar days
 const ALERT_EVAL_MAX_SYMBOLS = 30;
+const ALERT_EVAL_LOOKBACK_DAYS = 120;
 async function runAlertHistory(channel, eligible) {
   const uniqueSymbols = [...new Set(eligible.map(h => h.symbol))].slice(0, ALERT_EVAL_MAX_SYMBOLS);
-  const currentPrices = {};
+  const seriesBySymbol = {};
   for (const symbol of uniqueSymbols) {
     try {
-      const rows = await fetchDailySeries(symbol, 5);
-      if (rows.length) currentPrices[symbol] = rows[rows.length - 1].close;
+      const rows = await fetchDailySeries(symbol, ALERT_EVAL_LOOKBACK_DAYS);
+      if (rows.length) seriesBySymbol[symbol] = rows;
     } catch (err) {
       console.error(`Alert history lookup failed for ${symbol}: ${err.message}`);
     }
     await sleep(PACING_MS);
   }
 
-  const evaluable = eligible.filter(h => currentPrices[h.symbol] != null);
-  if (!evaluable.length) {
+  const evaluated = [];
+  for (const h of eligible) {
+    const rows = seriesBySymbol[h.symbol];
+    if (!rows) continue;
+
+    const firedDate = new Date(h.timestamp).toISOString().slice(0, 10);
+    const forwardRows = rows.filter(r => r.date > firedDate);
+    if (!forwardRows.length) continue;
+
+    const isBuySide = h.verdict.includes("Buy");
+    let forwardReturn = null;
+    let stoppedOut = false;
+
+    if (h.atr) {
+      const stopPrice = isBuySide ? h.price - 2 * h.atr : h.price + 2 * h.atr;
+      for (const row of forwardRows) {
+        const hitStop = isBuySide ? row.low <= stopPrice : row.high >= stopPrice;
+        if (hitStop) {
+          forwardReturn = ((stopPrice - h.price) / h.price) * 100;
+          stoppedOut = true;
+          break;
+        }
+      }
+    }
+
+    if (forwardReturn == null) {
+      const latestClose = forwardRows[forwardRows.length - 1].close;
+      forwardReturn = ((latestClose - h.price) / h.price) * 100;
+    }
+
+    evaluated.push({ verdict: h.verdict, forwardReturn, stoppedOut });
+  }
+
+  if (!evaluated.length) {
     await channel.send("Couldn't fetch current prices for any past alerts — try again later.");
     return;
   }
 
   const byVerdict = {};
-  for (const h of evaluable) {
-    const ret = ((currentPrices[h.symbol] - h.price) / h.price) * 100;
-    (byVerdict[h.verdict] ||= []).push(ret);
-  }
-  const summary = Object.entries(byVerdict).map(([verdict, returns]) => {
+  for (const e of evaluated) (byVerdict[e.verdict] ||= []).push(e);
+
+  const summary = Object.entries(byVerdict).map(([verdict, entries]) => {
     const isBuySide = verdict.includes("Buy");
-    const wins = returns.filter(r => (isBuySide ? r > 0 : r < 0)).length;
+    const wins = entries.filter(e => (isBuySide ? e.forwardReturn > 0 : e.forwardReturn < 0)).length;
     return {
-      verdict, count: returns.length,
-      winRate: (wins / returns.length) * 100,
-      avgReturn: returns.reduce((a, b) => a + b, 0) / returns.length
+      verdict, count: entries.length,
+      winRate: (wins / entries.length) * 100,
+      avgReturn: entries.reduce((a, e) => a + e.forwardReturn, 0) / entries.length,
+      stoppedCount: entries.filter(e => e.stoppedOut).length
     };
   });
 
   await channel.send({
-    embeds: [alertHistoryEmbed(summary, evaluable.length)],
+    embeds: [alertHistoryEmbed(summary, evaluated.length)],
     files: [logoAttachment()]
   });
 }
@@ -212,7 +247,7 @@ client.once(Events.ClientReady, c => {
         const results = await runScan(guildId);
         const fired = findFiredAlerts(guildId, results);
         if (fired.length) {
-          for (const r of fired) watchlist.logAlert(guildId, r.symbol, r.verdict, r.last.close);
+          for (const r of fired) watchlist.logAlert(guildId, r.symbol, r.verdict, r.last.close, r.atr);
           const channel = await client.channels.fetch(channelId);
           await channel.send({ embeds: [alertEmbed(fired)], files: [logoAttachment()] });
         }
@@ -471,7 +506,7 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         await interaction.editReply({
-          content: `Replayed ${rows.length} days of ${symbol} history. Small sample sizes are normal here — read this as a rough signal, not proof.`,
+          content: `Replayed ${rows.length} days of ${symbol} history, honoring the same 2x-ATR stop shown in /scan (a signal that would've been stopped out before day ${forwardDays} is scored at the stop price, not the day-${forwardDays} close). Small sample sizes are normal here — read this as a rough signal, not proof.`,
           embeds: [backtestEmbed(symbol, result)],
           files: [logoAttachment()]
         });

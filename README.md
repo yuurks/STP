@@ -147,6 +147,11 @@ npm start
   given how selective the confidence filter is). `/alerts history` is slower to build up (needs
   real time to pass) but measures actual forward performance, not a simulation. Neither is
   statistical proof of anything — treat both as a rough, honest gut-check, not validation.
+  Both are stop-aware: they walk day-by-day through the time since the signal fired and check
+  whether the same 2x-ATR stop shown in `/scan` would have been hit first, scoring the outcome
+  at the stop price rather than the latest close if so (shown as "Stopped out: X/N" per verdict
+  type). `/alerts history` can only do this for alerts fired after ATR started being logged
+  alongside them — older log entries fall back to a plain latest-price-vs-fired-price comparison.
 - **No order execution**: this only posts signals. Turning any of this into real trades would
   require a brokerage API (e.g. Alpaca, Interactive Brokers) and is a meaningfully bigger,
   higher-stakes project than a signal bot -- build and paper-test a strategy thoroughly first.

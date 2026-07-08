@@ -184,11 +184,11 @@ function saveVerdicts(guildId, verdicts) {
 // Every fired alert gets logged here so /alerts history can check back later on what the price
 // actually did -- real forward performance, not a simulation. Capped so this can't grow forever.
 const MAX_ALERT_HISTORY = 200;
-function logAlert(guildId, symbol, verdict, price) {
+function logAlert(guildId, symbol, verdict, price, atr) {
   const all = loadAll();
   const guild = ensureGuild(all, guildId);
   guild.alertHistory = guild.alertHistory || [];
-  guild.alertHistory.push({ symbol, verdict, price, timestamp: Date.now() });
+  guild.alertHistory.push({ symbol, verdict, price, atr: atr || null, timestamp: Date.now() });
   if (guild.alertHistory.length > MAX_ALERT_HISTORY) {
     guild.alertHistory = guild.alertHistory.slice(-MAX_ALERT_HISTORY);
   }
