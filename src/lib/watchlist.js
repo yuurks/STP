@@ -111,6 +111,21 @@ function markAutobuildRun(guildId, timestamp) {
   saveAll(all);
 }
 
+// Recurring config for the standalone /autobuild command -- shares the same autobuildLastRun
+// cooldown clock as the manual /watch autobuild trigger, so the two can't stack.
+function setAutobuildSchedule(guildId, config) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.autobuildSchedule = config;
+  saveAll(all);
+  return guild.autobuildSchedule;
+}
+
+function allGuildsWithAutobuildSchedule() {
+  const all = loadAll();
+  return Object.entries(all).filter(([, g]) => g.autobuildSchedule);
+}
+
 function setAutoscan(guildId, channelId, intervalMinutes) {
   const all = loadAll();
   const guild = ensureGuild(all, guildId);
@@ -186,11 +201,34 @@ function getAlertHistory(guildId) {
   return guild.alertHistory || [];
 }
 
+// Recurring config for /alerts digest-on -- periodically posts the same "real performance"
+// report /alerts history builds on demand, without needing to be asked.
+function setAlertDigestSchedule(guildId, config) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.alertDigestSchedule = config;
+  saveAll(all);
+  return guild.alertDigestSchedule;
+}
+
+function markAlertDigestRun(guildId, timestamp) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  if (guild.alertDigestSchedule) guild.alertDigestSchedule.lastRun = timestamp;
+  saveAll(all);
+}
+
+function allGuildsWithAlertDigestSchedule() {
+  const all = loadAll();
+  return Object.entries(all).filter(([, g]) => g.alertDigestSchedule);
+}
+
 module.exports = {
   getGuild, addTicker, addTickers, removeTicker, clearTickers, replaceTickers,
-  getAutobuildLastRun, markAutobuildRun,
+  getAutobuildLastRun, markAutobuildRun, setAutobuildSchedule, allGuildsWithAutobuildSchedule,
   setAutoscan, markAutoscanRun, allGuildsWithAutoscan,
   setAlerts, markAlertsRun, allGuildsWithAlerts, getLastVerdicts, saveVerdicts,
   logAlert, getAlertHistory,
+  setAlertDigestSchedule, markAlertDigestRun, allGuildsWithAlertDigestSchedule,
   normalizeSymbol, isValidTicker
 };

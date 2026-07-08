@@ -76,13 +76,17 @@ npm start
 | `/watch remove ticker:AAPL` | Remove one |
 | `/watch list` | Show the current watchlist |
 | `/watch clear` | Remove every ticker from the watchlist |
-| `/watch autobuild universe:both sample:100 count:15` | Sample random candidates from `stocks.txt`/`crypto.txt`, rank by recent volatility, and **replace** the watchlist with the most volatile `count` of them. Runs in the background and posts results when done (once per 24h per server) |
+| `/watch autobuild universe:both sample:100 count:15` | **One-off**: sample random candidates from `stocks.txt`/`crypto.txt`, rank by recent volatility, and **replace** the watchlist with the most volatile `count` of them. Runs in the background and posts results when done |
+| `/autobuild on channel:#signals interval_hours:24 ...` | **Recurring** version of the above — automatically reruns `/watch autobuild` on a schedule (min 24h) and posts to a channel, instead of you triggering it manually each time |
+| `/autobuild off` | Turn off scheduled autobuild |
 | `/scan` | Run the scanner on the watchlist right now, posts a ranked embed |
 | `/autoscan on channel:#signals interval_minutes:60` | Auto-run `/scan` on a schedule, posting the full ranked watchlist every time. Omit `interval_minutes` to use the fastest interval your watchlist size allows |
 | `/autoscan off` | Turn scheduled scans off |
 | `/alerts on channel:#signals interval_minutes:60` | Check on a schedule, but only post a ticker when its verdict *changes* to Buy/Sell (quiet otherwise). Omit `interval_minutes` to use the fastest interval your watchlist size allows |
 | `/alerts off` | Turn signal alerts off |
-| `/alerts history` | See how past alerts *actually* performed — fetches current prices for alerts at least ~5 days old and reports real win rate / avg return per verdict type |
+| `/alerts history` | **One-off**: see how past alerts *actually* performed — fetches current prices for alerts at least ~5 days old and reports real win rate / avg return per verdict type |
+| `/alerts digest-on channel:#signals interval_days:7` | **Recurring** version of the above — automatically posts the alert performance report on a schedule instead of you asking for it |
+| `/alerts digest-off` | Turn off the automatic alert digest |
 | `/backtest ticker:AAPL forward_days:5` | Replay this bot's own signal logic day-by-day over a ticker's history (no lookahead) and report what would have happened `forward_days` later after each signal |
 
 ## Notes and honest limitations
@@ -113,6 +117,13 @@ npm start
   one global ranking — crypto's baseline volatility runs structurally higher than stocks', so a
   single ranking would crowd out stocks almost every time and leave you with a concentrated,
   highly-correlated crypto-only watchlist instead of a genuinely diversified one.
+- **`/autobuild on` and manual `/watch autobuild` share one cooldown clock**: both write to the
+  same "last run" timestamp, so triggering one pushes back when the other is next allowed to
+  run. This is deliberate — it stops a scheduled and a manual run from ever overlapping and
+  double-spending the daily request quota. `/backtest` isn't offered as a scheduled command: it's
+  a one-ticker diagnostic, and "automating" it would mean deciding which ticker(s) to run it
+  against and how to summarize the results, which felt like a call worth making explicitly
+  rather than guessing at.
 - **Suggested stops**: `/scan`, `/alerts`, and `/watch autobuild` show a suggested stop-loss at
   2x ATR (Average True Range) from the current price on any Buy/Sell verdict — sized to that
   ticker's own typical daily range rather than a flat percentage. It's a standard starting point

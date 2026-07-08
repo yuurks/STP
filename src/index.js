@@ -221,6 +221,44 @@ client.once(Events.ClientReady, c => {
         console.error(`Alert check failed for guild ${guildId}: ${err.message}`);
       }
     }
+
+    for (const [guildId, guildData] of watchlist.allGuildsWithAutobuildSchedule()) {
+      const { channelId, intervalHours, universe: universeChoice, sample, count } = guildData.autobuildSchedule;
+      // Shares the same cooldown clock as manual /watch autobuild, so a scheduled and a manual
+      // run can never overlap/double-spend the daily request quota.
+      const lastRun = watchlist.getAutobuildLastRun(guildId);
+      const due = !lastRun || now - lastRun >= intervalHours * 60 * 60 * 1000;
+      if (!due) continue;
+
+      try {
+        const pool = universe.loadUniverse(universeChoice);
+        if (!pool.length) continue;
+        const candidates = universe.sample(pool, sample);
+        const channel = await client.channels.fetch(channelId);
+        watchlist.markAutobuildRun(guildId, now); // mark before the long scan starts, not after
+        await channel.send(`Scheduled volatility scan starting: checking ${candidates.length} candidates from the ${universeChoice} pool...`);
+        await runAutobuild(guildId, channel, candidates, count, universeChoice);
+      } catch (err) {
+        console.error(`Scheduled autobuild failed for guild ${guildId}: ${err.message}`);
+      }
+    }
+
+    for (const [guildId, guildData] of watchlist.allGuildsWithAlertDigestSchedule()) {
+      const { channelId, intervalDays, lastRun } = guildData.alertDigestSchedule;
+      const due = !lastRun || now - lastRun >= intervalDays * 24 * 60 * 60 * 1000;
+      if (!due) continue;
+
+      try {
+        const history = watchlist.getAlertHistory(guildId);
+        const eligible = history.filter(h => now - h.timestamp >= ALERT_EVAL_MIN_AGE_MS);
+        watchlist.markAlertDigestRun(guildId, now);
+        if (!eligible.length) continue;
+        const channel = await client.channels.fetch(channelId);
+        await runAlertHistory(channel, eligible);
+      } catch (err) {
+        console.error(`Alert digest failed for guild ${guildId}: ${err.message}`);
+      }
+    }
   }, 60 * 1000);
 });
 
@@ -395,6 +433,14 @@ client.on(Events.InteractionCreate, async interaction => {
             console.error(`Alert history check failed for guild ${interaction.guildId}: ${err.message}`);
             interaction.channel.send("Alert history check failed partway through — check the bot logs.").catch(() => {});
           });
+        } else if (sub === "digest-on") {
+          const channel = interaction.options.getChannel("channel");
+          const intervalDays = Math.max(1, interaction.options.getInteger("interval_days") || 7);
+          watchlist.setAlertDigestSchedule(interaction.guildId, { channelId: channel.id, intervalDays, lastRun: null });
+          await interaction.reply(`Alert performance digest on: every ${intervalDays} day(s), posting to ${channel}.`);
+        } else if (sub === "digest-off") {
+          watchlist.setAlertDigestSchedule(interaction.guildId, null);
+          await interaction.reply("Alert performance digest turned off.");
         }
         break;
       }
@@ -429,6 +475,29 @@ client.on(Events.InteractionCreate, async interaction => {
           embeds: [backtestEmbed(symbol, result)],
           files: [logoAttachment()]
         });
+        break;
+      }
+
+      case "autobuild": {
+        const sub = interaction.options.getSubcommand();
+        if (sub === "on") {
+          const channel = interaction.options.getChannel("channel");
+          const intervalHours = Math.max(24, interaction.options.getInteger("interval_hours") || 24);
+          const universeChoice = interaction.options.getString("universe") || "both";
+          const sample = Math.min(300, Math.max(10, interaction.options.getInteger("sample") || 100));
+          const count = Math.min(50, Math.max(1, interaction.options.getInteger("count") || 15));
+          watchlist.setAutobuildSchedule(interaction.guildId, {
+            channelId: channel.id, intervalHours, universe: universeChoice, sample, count
+          });
+          await interaction.reply(
+            `Scheduled autobuild on: every ${intervalHours}h, sampling ${sample} candidates from the ${universeChoice} pool, ` +
+            `keeping the top ${count} most volatile, posting to ${channel}. Shares its cooldown with manual \`/watch autobuild\`, ` +
+            "so running that separately will push back the next scheduled run."
+          );
+        } else if (sub === "off") {
+          watchlist.setAutobuildSchedule(interaction.guildId, null);
+          await interaction.reply("Scheduled autobuild turned off.");
+        }
         break;
       }
     }
