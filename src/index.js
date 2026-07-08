@@ -4,7 +4,7 @@ const { Client, GatewayIntentBits, Events } = require("discord.js");
 const { analyze } = require("./lib/indicators");
 const { fetchDailySeries } = require("./lib/marketData");
 const watchlist = require("./lib/watchlist");
-const { scanEmbed, logoAttachment } = require("./lib/embeds");
+const { scanEmbed, alertEmbed, logoAttachment } = require("./lib/embeds");
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
@@ -48,6 +48,20 @@ async function runScan(guildId) {
   return results;
 }
 
+// Fires only for tickers whose verdict is actionable (not Neutral) and has changed since the
+// last check -- so a ticker sitting at "Buy" doesn't re-alert every interval, only on the
+// Neutral->Buy (or Buy->Sell, etc.) transition.
+function findFiredAlerts(guildId, results) {
+  const lastVerdicts = watchlist.getLastVerdicts(guildId);
+  const fired = results.filter(r => r.verdict !== "Neutral" && lastVerdicts[r.symbol] !== r.verdict);
+
+  const newVerdicts = {};
+  for (const r of results) newVerdicts[r.symbol] = r.verdict;
+  watchlist.saveVerdicts(guildId, newVerdicts);
+
+  return fired;
+}
+
 client.once(Events.ClientReady, c => {
   console.log(`Logged in as ${c.user.tag}`);
 
@@ -66,6 +80,24 @@ client.once(Events.ClientReady, c => {
         watchlist.markAutoscanRun(guildId, now);
       } catch (err) {
         console.error(`Autoscan failed for guild ${guildId}: ${err.message}`);
+      }
+    }
+
+    for (const [guildId, guildData] of watchlist.allGuildsWithAlerts()) {
+      const { channelId, intervalMinutes, lastRun } = guildData.alerts;
+      const due = !lastRun || now - lastRun >= intervalMinutes * 60 * 1000;
+      if (!due) continue;
+
+      try {
+        const results = await runScan(guildId);
+        const fired = findFiredAlerts(guildId, results);
+        if (fired.length) {
+          const channel = await client.channels.fetch(channelId);
+          await channel.send({ embeds: [alertEmbed(fired)], files: [logoAttachment()] });
+        }
+        watchlist.markAlertsRun(guildId, now);
+      } catch (err) {
+        console.error(`Alert check failed for guild ${guildId}: ${err.message}`);
       }
     }
   }, 60 * 1000);
@@ -152,6 +184,22 @@ client.on(Events.InteractionCreate, async interaction => {
         } else if (sub === "off") {
           watchlist.setAutoscan(interaction.guildId, null, null);
           await interaction.reply("Auto-scan turned off.");
+        }
+        break;
+      }
+
+      case "alerts": {
+        const sub = interaction.options.getSubcommand();
+        if (sub === "on") {
+          const channel = interaction.options.getChannel("channel");
+          const minutes = interaction.options.getInteger("interval_minutes") || 60;
+          watchlist.setAlerts(interaction.guildId, channel.id, minutes);
+          await interaction.reply(
+            `Signal alerts on: checking every ${minutes} min, posting to ${channel} only when a ticker's verdict changes to Buy/Sell.`
+          );
+        } else if (sub === "off") {
+          watchlist.setAlerts(interaction.guildId, null, null);
+          await interaction.reply("Signal alerts turned off.");
         }
         break;
       }

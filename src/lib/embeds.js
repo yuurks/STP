@@ -37,4 +37,23 @@ function scanEmbed(results) {
   return embed;
 }
 
-module.exports = { scanEmbed, logoAttachment, VERDICT_COLOR };
+function alertEmbed(fired) {
+  const embed = new EmbedBuilder()
+    .setTitle("🚨 Signal Alert")
+    .setColor(0xffb020)
+    .setThumbnail("attachment://logo.png")
+    .setFooter({ text: "Technical pattern signals, not financial advice" })
+    .setTimestamp();
+
+  fired.forEach(r => {
+    embed.addFields({
+      name: `${r.symbol} · $${r.last.close.toFixed(2)} — ${r.verdict}`,
+      value: `Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}`,
+      inline: false
+    });
+  });
+
+  return embed;
+}
+
+module.exports = { scanEmbed, alertEmbed, logoAttachment, VERDICT_COLOR };

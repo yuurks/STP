@@ -77,8 +77,10 @@ npm start
 | `/watch list` | Show the current watchlist |
 | `/watch clear` | Remove every ticker from the watchlist |
 | `/scan` | Run the scanner on the watchlist right now, posts a ranked embed |
-| `/autoscan on channel:#signals interval_minutes:60` | Auto-run `/scan` on a schedule |
+| `/autoscan on channel:#signals interval_minutes:60` | Auto-run `/scan` on a schedule, posting the full ranked watchlist every time |
 | `/autoscan off` | Turn scheduled scans off |
+| `/alerts on channel:#signals interval_minutes:60` | Check on a schedule, but only post a ticker when its verdict *changes* to Buy/Sell (quiet otherwise) |
+| `/alerts off` | Turn signal alerts off |
 
 ## Notes and honest limitations
 
@@ -88,7 +90,12 @@ npm start
   math applies either way.
 - **Rate limits**: the free Twelve Data tier allows 8 requests/minute. The bot paces requests
   with a 1-second delay between symbols, so large watchlists take longer to scan -- fine for
-  a handful of tickers, slow for dozens. Upgrade your data plan if you need more.
+  a handful of tickers, slow for dozens. Upgrade your data plan if you need more. Running
+  `/autoscan` and `/alerts` on the same server doubles API usage, since each runs its own scan.
+- **Alerts fire on change, not on every check**: `/alerts` remembers each ticker's last verdict
+  and only posts when it flips (e.g. Neutral -> Buy). Since indicators are computed from daily
+  candles, meaningful changes typically happen at most once a day regardless of how often you
+  set it to check.
 - **No order execution**: this only posts signals. Turning any of this into real trades would
   require a brokerage API (e.g. Alpaca, Interactive Brokers) and is a meaningfully bigger,
   higher-stakes project than a signal bot -- build and paper-test a strategy thoroughly first.

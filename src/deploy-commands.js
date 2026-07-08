@@ -31,7 +31,17 @@ const commands = [
         .addChannelOption(o => o.setName("channel").setDescription("Channel to post results in").setRequired(true))
         .addIntegerOption(o => o.setName("interval_minutes").setDescription("How often to scan, in minutes (default 60)").setRequired(false))
     )
-    .addSubcommand(sc => sc.setName("off").setDescription("Turn off auto-scan"))
+    .addSubcommand(sc => sc.setName("off").setDescription("Turn off auto-scan")),
+
+  new SlashCommandBuilder()
+    .setName("alerts")
+    .setDescription("Get pinged only when a ticker's signal changes to Buy/Sell")
+    .addSubcommand(sc =>
+      sc.setName("on").setDescription("Turn on signal alerts")
+        .addChannelOption(o => o.setName("channel").setDescription("Channel to post alerts in").setRequired(true))
+        .addIntegerOption(o => o.setName("interval_minutes").setDescription("How often to check for changes, in minutes (default 60)").setRequired(false))
+    )
+    .addSubcommand(sc => sc.setName("off").setDescription("Turn off signal alerts"))
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);

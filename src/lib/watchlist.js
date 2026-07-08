@@ -109,7 +109,43 @@ function allGuildsWithAutoscan() {
   return Object.entries(all).filter(([, g]) => g.autoscan);
 }
 
+function setAlerts(guildId, channelId, intervalMinutes) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.alerts = channelId ? { channelId, intervalMinutes, lastRun: null } : null;
+  saveAll(all);
+  return guild.alerts;
+}
+
+function markAlertsRun(guildId, timestamp) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  if (guild.alerts) guild.alerts.lastRun = timestamp;
+  saveAll(all);
+}
+
+function allGuildsWithAlerts() {
+  const all = loadAll();
+  return Object.entries(all).filter(([, g]) => g.alerts);
+}
+
+// Remembers each ticker's verdict from the last alert check, so alerts only fire when a
+// verdict actually changes (e.g. Neutral -> Buy) instead of repeating every interval.
+function getLastVerdicts(guildId) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  return guild.lastVerdicts || {};
+}
+
+function saveVerdicts(guildId, verdicts) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.lastVerdicts = { ...(guild.lastVerdicts || {}), ...verdicts };
+  saveAll(all);
+}
+
 module.exports = {
   getGuild, addTicker, addTickers, removeTicker, clearTickers, setAutoscan, markAutoscanRun, allGuildsWithAutoscan,
+  setAlerts, markAlertsRun, allGuildsWithAlerts, getLastVerdicts, saveVerdicts,
   normalizeSymbol, isValidTicker
 };
