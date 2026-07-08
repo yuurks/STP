@@ -56,4 +56,24 @@ function alertEmbed(fired) {
   return embed;
 }
 
-module.exports = { scanEmbed, alertEmbed, logoAttachment, VERDICT_COLOR };
+function volatilityEmbed(results) {
+  const sorted = [...results].sort((a, b) => b.volatility - a.volatility);
+  const embed = new EmbedBuilder()
+    .setTitle("📡 Signal Deck — Volatility Scan Results")
+    .setColor(0x5b8def)
+    .setThumbnail("attachment://logo.png")
+    .setFooter({ text: "Technical pattern signals, not financial advice" })
+    .setTimestamp();
+
+  sorted.slice(0, 25).forEach(r => {
+    embed.addFields({
+      name: `${r.symbol} · $${r.last.close.toFixed(2)} — ${r.volatility.toFixed(1)}% daily volatility`,
+      value: `${r.verdict} · Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}`,
+      inline: false
+    });
+  });
+
+  return embed;
+}
+
+module.exports = { scanEmbed, alertEmbed, volatilityEmbed, logoAttachment, VERDICT_COLOR };

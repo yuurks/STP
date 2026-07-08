@@ -5,7 +5,7 @@ const { analyze } = require("./lib/indicators");
 const { fetchDailySeries } = require("./lib/marketData");
 const watchlist = require("./lib/watchlist");
 const universe = require("./lib/universe");
-const { scanEmbed, alertEmbed, logoAttachment } = require("./lib/embeds");
+const { scanEmbed, alertEmbed, volatilityEmbed, logoAttachment } = require("./lib/embeds");
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
@@ -69,8 +69,8 @@ async function runAutobuild(guildId, channel, candidates, count) {
     try {
       const rows = await fetchDailySeries(symbol);
       if (rows.length >= 30) {
-        const { volatility: vol } = analyze(rows);
-        found.push({ symbol, volatility: vol });
+        const analysis = analyze(rows);
+        found.push({ symbol, ...analysis });
       }
     } catch (err) {
       console.error(`Autobuild lookup failed for ${symbol}: ${err.message}`);
@@ -87,12 +87,11 @@ async function runAutobuild(guildId, channel, candidates, count) {
   }
 
   const tickers = watchlist.replaceTickers(guildId, top.map(t => t.symbol));
-  const summary = top.map(t => `${t.symbol} (${t.volatility.toFixed(1)}%)`);
-  await channel.send(
-    `Volatility scan complete: checked ${found.length}/${candidates.length} candidates. ` +
-    `Watchlist replaced with the ${tickers.length} most volatile (daily volatility shown):\n` +
-    formatTickerList(summary)
-  );
+  await channel.send({
+    content: `Volatility scan complete: checked ${found.length}/${candidates.length} candidates. Watchlist replaced with the ${tickers.length} most volatile.`,
+    embeds: [volatilityEmbed(top)],
+    files: [logoAttachment()]
+  });
 }
 
 // Fires only for tickers whose verdict is actionable (not Neutral) and has changed since the
