@@ -8,9 +8,19 @@ const { scanEmbed, alertEmbed, logoAttachment } = require("./lib/embeds");
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-// pacing between symbol lookups so we don't blow through a free-tier market-data rate limit
-const PACING_MS = 1000;
+// Twelve Data's free tier allows 8 requests/minute -- 7.5s is the fastest pace that stays
+// under that. (1 req/sec, the old value here, was actually 60/min and would rate-limit mid-scan.)
+const PACING_MS = 7500;
 const sleep = ms => new Promise(res => setTimeout(res, ms));
+
+// Twelve Data's free tier also caps out at 800 requests/day. A scheduled scan (autoscan or
+// alerts) uses one request per ticker, so this is the fewest minutes between scans that stays
+// under the daily cap for a given watchlist size.
+const REQUESTS_PER_DAY_LIMIT = 800;
+function minSustainableInterval(tickerCount) {
+  if (tickerCount <= 0) return 15;
+  return Math.max(15, Math.ceil((tickerCount * 24 * 60) / REQUESTS_PER_DAY_LIMIT));
+}
 
 // Discord messages cap out at 2000 characters. Defensive: even if a watchlist somehow grows
 // huge, never build a reply that Discord will reject -- truncate and say how much got cut off.
@@ -177,8 +187,18 @@ client.on(Events.InteractionCreate, async interaction => {
       case "autoscan": {
         const sub = interaction.options.getSubcommand();
         if (sub === "on") {
+          const guild = watchlist.getGuild(interaction.guildId);
+          const minMinutes = minSustainableInterval(guild.tickers.length);
+          const requested = interaction.options.getInteger("interval_minutes");
+          const minutes = requested || minMinutes;
+          if (minutes < minMinutes) {
+            await interaction.reply({
+              content: `With ${guild.tickers.length} tickers on your watchlist, the fastest sustainable interval on Twelve Data's free tier is ${minMinutes} min (any faster risks running out of your daily request quota). Try \`interval_minutes:${minMinutes}\` or trim the watchlist.`,
+              ephemeral: true
+            });
+            break;
+          }
           const channel = interaction.options.getChannel("channel");
-          const minutes = interaction.options.getInteger("interval_minutes") || 60;
           watchlist.setAutoscan(interaction.guildId, channel.id, minutes);
           await interaction.reply(`Auto-scan on: every ${minutes} min, posting to ${channel}.`);
         } else if (sub === "off") {
@@ -191,8 +211,18 @@ client.on(Events.InteractionCreate, async interaction => {
       case "alerts": {
         const sub = interaction.options.getSubcommand();
         if (sub === "on") {
+          const guild = watchlist.getGuild(interaction.guildId);
+          const minMinutes = minSustainableInterval(guild.tickers.length);
+          const requested = interaction.options.getInteger("interval_minutes");
+          const minutes = requested || minMinutes;
+          if (minutes < minMinutes) {
+            await interaction.reply({
+              content: `With ${guild.tickers.length} tickers on your watchlist, the fastest sustainable interval on Twelve Data's free tier is ${minMinutes} min (any faster risks running out of your daily request quota). Try \`interval_minutes:${minMinutes}\` or trim the watchlist.`,
+              ephemeral: true
+            });
+            break;
+          }
           const channel = interaction.options.getChannel("channel");
-          const minutes = interaction.options.getInteger("interval_minutes") || 60;
           watchlist.setAlerts(interaction.guildId, channel.id, minutes);
           await interaction.reply(
             `Signal alerts on: checking every ${minutes} min, posting to ${channel} only when a ticker's verdict changes to Buy/Sell.`

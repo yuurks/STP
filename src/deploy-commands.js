@@ -29,7 +29,7 @@ const commands = [
     .addSubcommand(sc =>
       sc.setName("on").setDescription("Turn on auto-scan")
         .addChannelOption(o => o.setName("channel").setDescription("Channel to post results in").setRequired(true))
-        .addIntegerOption(o => o.setName("interval_minutes").setDescription("How often to scan, in minutes (default 60)").setRequired(false))
+        .addIntegerOption(o => o.setName("interval_minutes").setDescription("How often to scan, in minutes (default: fastest your watchlist size allows)").setRequired(false))
     )
     .addSubcommand(sc => sc.setName("off").setDescription("Turn off auto-scan")),
 
@@ -39,7 +39,7 @@ const commands = [
     .addSubcommand(sc =>
       sc.setName("on").setDescription("Turn on signal alerts")
         .addChannelOption(o => o.setName("channel").setDescription("Channel to post alerts in").setRequired(true))
-        .addIntegerOption(o => o.setName("interval_minutes").setDescription("How often to check for changes, in minutes (default 60)").setRequired(false))
+        .addIntegerOption(o => o.setName("interval_minutes").setDescription("How often to check for changes, in minutes (default: fastest your watchlist size allows)").setRequired(false))
     )
     .addSubcommand(sc => sc.setName("off").setDescription("Turn off signal alerts"))
 ].map(c => c.toJSON());

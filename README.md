@@ -77,9 +77,9 @@ npm start
 | `/watch list` | Show the current watchlist |
 | `/watch clear` | Remove every ticker from the watchlist |
 | `/scan` | Run the scanner on the watchlist right now, posts a ranked embed |
-| `/autoscan on channel:#signals interval_minutes:60` | Auto-run `/scan` on a schedule, posting the full ranked watchlist every time |
+| `/autoscan on channel:#signals interval_minutes:60` | Auto-run `/scan` on a schedule, posting the full ranked watchlist every time. Omit `interval_minutes` to use the fastest interval your watchlist size allows |
 | `/autoscan off` | Turn scheduled scans off |
-| `/alerts on channel:#signals interval_minutes:60` | Check on a schedule, but only post a ticker when its verdict *changes* to Buy/Sell (quiet otherwise) |
+| `/alerts on channel:#signals interval_minutes:60` | Check on a schedule, but only post a ticker when its verdict *changes* to Buy/Sell (quiet otherwise). Omit `interval_minutes` to use the fastest interval your watchlist size allows |
 | `/alerts off` | Turn signal alerts off |
 
 ## Notes and honest limitations
@@ -88,10 +88,12 @@ npm start
   same Twelve Data endpoint, same free-tier quota, no separate setup. Crypto trades 24/7 so its
   daily candles won't have the weekend gaps stocks do, but the same SMA/EMA/RSI/MACD/Bollinger
   math applies either way.
-- **Rate limits**: the free Twelve Data tier allows 8 requests/minute. The bot paces requests
-  with a 1-second delay between symbols, so large watchlists take longer to scan -- fine for
-  a handful of tickers, slow for dozens. Upgrade your data plan if you need more. Running
-  `/autoscan` and `/alerts` on the same server doubles API usage, since each runs its own scan.
+- **Rate limits**: the free Twelve Data tier allows 8 requests/minute and 800/day. The bot paces
+  requests at 7.5s apart to respect the per-minute cap. `/autoscan on` and `/alerts on` both
+  reject an `interval_minutes` that would exceed the daily cap for your current watchlist size
+  (and if you don't specify one, they default to the fastest interval that stays under it).
+  Running both on the same server doubles API usage, since each runs its own scan. Upgrade your
+  data plan if you need faster or more frequent scanning than the free tier allows.
 - **Alerts fire on change, not on every check**: `/alerts` remembers each ticker's last verdict
   and only posts when it flips (e.g. Neutral -> Buy). Since indicators are computed from daily
   candles, meaningful changes typically happen at most once a day regardless of how often you
