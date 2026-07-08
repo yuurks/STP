@@ -105,6 +105,11 @@ npm start
   single large run can eat a large chunk of the daily request quota by itself. Volatility here
   is just the standard deviation of daily % price changes over the fetched window — a measure
   of how much a ticker moves, not a prediction of which direction it'll move next.
+- **Gap to fill**: every scan (`/scan`, `/alerts`, `/watch autobuild`) also reports the nearest
+  unfilled price gap for each ticker, if one exists — a day whose price jumped clean past the
+  prior day's high/low with no trading in between. Shown as how far price still has to move,
+  and in which direction, to trade back through that level. This is a purely mechanical
+  reading of the candle data, not a prediction that the gap will actually get filled.
 - **No order execution**: this only posts signals. Turning any of this into real trades would
   require a brokerage API (e.g. Alpaca, Interactive Brokers) and is a meaningfully bigger,
   higher-stakes project than a signal bot -- build and paper-test a strategy thoroughly first.

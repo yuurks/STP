@@ -143,6 +143,36 @@ function volatility(closes) {
   return Math.sqrt(variance) * 100;
 }
 
+// Finds the most recent unfilled price gap: a day whose low/high jumped clean past the prior
+// day's high/low, with no trading in between. A gap up is "filled" once price later trades back
+// down to the pre-gap level; a gap down, once price trades back up to it. Scans backward from
+// the latest bar so it reports the most recent gap that's still open, not the biggest ever.
+function findUnfilledGap(rows) {
+  for (let i = rows.length - 1; i > 0; i--) {
+    const today = rows[i], prev = rows[i - 1];
+    let type = null, level = null;
+    if (today.low > prev.high) { type = "up"; level = prev.high; }
+    else if (today.high < prev.low) { type = "down"; level = prev.low; }
+    if (!type) continue;
+
+    let filled = false;
+    for (let j = i + 1; j < rows.length; j++) {
+      if (type === "up" && rows[j].low <= level) { filled = true; break; }
+      if (type === "down" && rows[j].high >= level) { filled = true; break; }
+    }
+    if (filled) continue;
+
+    const lastClose = rows[rows.length - 1].close;
+    const distance = Math.max(0, type === "up" ? lastClose - level : level - lastClose);
+    return {
+      type, level, date: today.date,
+      direction: type === "up" ? "down" : "up",
+      distance, pct: (distance / lastClose) * 100
+    };
+  }
+  return null;
+}
+
 // full pipeline: raw OHLC rows -> enriched rows + latest score/verdict/notes
 function analyze(rows) {
   const closes = rows.map(r => r.close);
@@ -163,7 +193,10 @@ function analyze(rows) {
 
   const n = enriched.length - 1;
   const { score, verdict, notes } = scoreAt(enriched, n);
-  return { rows: enriched, score, verdict, notes, last: enriched[n], volatility: volatility(closes) };
+  return {
+    rows: enriched, score, verdict, notes, last: enriched[n],
+    volatility: volatility(closes), gap: findUnfilledGap(rows)
+  };
 }
 
-module.exports = { analyze, scoreAt, verdictFromScore, verdictSide };
+module.exports = { analyze, scoreAt, verdictFromScore, verdictSide, findUnfilledGap };

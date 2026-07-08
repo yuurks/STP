@@ -17,6 +17,13 @@ function logoAttachment() {
   return new AttachmentBuilder(LOGO_PATH, { name: "logo.png" });
 }
 
+// One extra line describing the nearest unfilled price gap, if any -- blank otherwise so it's
+// safe to always append.
+function gapLine(gap) {
+  if (!gap) return "";
+  return `\nGap to fill: $${gap.distance.toFixed(2)} (${gap.pct.toFixed(1)}%) ${gap.direction} to $${gap.level.toFixed(2)}`;
+}
+
 function scanEmbed(results) {
   const sorted = [...results].sort((a, b) => b.score - a.score);
   const embed = new EmbedBuilder()
@@ -29,7 +36,7 @@ function scanEmbed(results) {
   sorted.slice(0, 25).forEach(r => {
     embed.addFields({
       name: `${r.symbol} · $${r.last.close.toFixed(2)} — ${r.verdict}`,
-      value: `Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}`,
+      value: `Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}`,
       inline: false
     });
   });
@@ -48,7 +55,7 @@ function alertEmbed(fired) {
   fired.forEach(r => {
     embed.addFields({
       name: `${r.symbol} · $${r.last.close.toFixed(2)} — ${r.verdict}`,
-      value: `Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}`,
+      value: `Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}`,
       inline: false
     });
   });
@@ -68,7 +75,7 @@ function volatilityEmbed(results) {
   sorted.slice(0, 25).forEach(r => {
     embed.addFields({
       name: `${r.symbol} · $${r.last.close.toFixed(2)} — ${r.volatility.toFixed(1)}% daily volatility`,
-      value: `${r.verdict} · Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}`,
+      value: `${r.verdict} · Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}`,
       inline: false
     });
   });
