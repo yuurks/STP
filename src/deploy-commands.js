@@ -87,7 +87,17 @@ const commands = [
         .addIntegerOption(o => o.setName("sample").setDescription("How many random candidates to check, 10-300 (default 100)").setRequired(false))
         .addIntegerOption(o => o.setName("count").setDescription("How many of the most volatile to keep, 1-50 (default 15)").setRequired(false))
     )
-    .addSubcommand(sc => sc.setName("off").setDescription("Turn off scheduled autobuild"))
+    .addSubcommand(sc => sc.setName("off").setDescription("Turn off scheduled autobuild")),
+
+  new SlashCommandBuilder()
+    .setName("portfolio")
+    .setDescription("Simulated paper-trading portfolio driven by this bot's own signals (no real money)")
+    .addSubcommand(sc =>
+      sc.setName("start").setDescription("Start a new paper portfolio")
+        .addNumberOption(o => o.setName("starting_cash").setDescription("Virtual starting cash, $100-$1,000,000 (default $10,000)").setRequired(false))
+    )
+    .addSubcommand(sc => sc.setName("status").setDescription("Show paper portfolio value, open positions, and recent trades"))
+    .addSubcommand(sc => sc.setName("reset").setDescription("Wipe the paper portfolio and start over"))
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);

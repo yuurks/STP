@@ -78,7 +78,10 @@ Uses Node's built-in test runner (`node --test`, no extra dependency). Covers th
 `src/lib/indicators.js` -- `findUnfilledGap`, `atr`, `adx`, and `backtest` (including a real
 no-lookahead check, not just a hand-wave: it runs two otherwise-identical price series that only
 diverge after a cutoff day, and asserts every signal evaluated before that day produces an
-identical verdict regardless of what happens afterward). It doesn't cover the Discord-facing
+identical verdict regardless of what happens afterward) -- and the paper-portfolio logic in
+`src/lib/portfolio.js` (position sizing, stop-hit vs. sell-signal exits, and a regression test
+for a real bug this suite caught: a stop-out and an unrelated same-pass Buy verdict on the same
+symbol could otherwise re-open the position it just closed). It doesn't cover the Discord-facing
 code in `index.js` -- that still needs to be exercised by hand in a real server.
 
 ## Commands
@@ -101,6 +104,9 @@ code in `index.js` -- that still needs to be exercised by hand in a real server.
 | `/alerts digest-on channel:#signals interval_days:7` | **Recurring** version of the above — automatically posts the alert performance report on a schedule instead of you asking for it |
 | `/alerts digest-off` | Turn off the automatic alert digest |
 | `/backtest ticker:AAPL forward_days:5` | Replay this bot's own signal logic day-by-day over a ticker's history (no lookahead) and report what would have happened `forward_days` later after each signal |
+| `/portfolio start starting_cash:10000` | Start a simulated paper-trading portfolio (no real money) that follows this bot's own Buy/Sell signals |
+| `/portfolio status` | Show current cash, open positions with live unrealized P&L, total return, and recent closed trades |
+| `/portfolio reset` | Wipe the paper portfolio and start over |
 
 ## Notes and honest limitations
 
@@ -165,9 +171,21 @@ code in `index.js` -- that still needs to be exercised by hand in a real server.
   at the stop price rather than the latest close if so (shown as "Stopped out: X/N" per verdict
   type). `/alerts history` can only do this for alerts fired after ATR started being logged
   alongside them — older log entries fall back to a plain latest-price-vs-fired-price comparison.
-- **No order execution**: this only posts signals. Turning any of this into real trades would
-  require a brokerage API (e.g. Alpaca, Interactive Brokers) and is a meaningfully bigger,
-  higher-stakes project than a signal bot -- build and paper-test a strategy thoroughly first.
+- **No real order execution**: `/portfolio` simulates trading (see below), but it is not
+  connected to any brokerage and never risks real money. Turning this into real automated
+  trades would require a brokerage API (e.g. Alpaca, Interactive Brokers), real capital at risk
+  with no human confirming each order, and is a meaningfully bigger, higher-stakes project than
+  anything else in this repo -- if you ever go there, paper-trade with that brokerage's own
+  paper account first, not real funds, no matter how good `/backtest` or `/portfolio` look.
+- **`/portfolio` is a paper-trading simulator, long-only**: it mechanically opens a simulated
+  position on every Buy/Strong Buy (sized at 20% of current simulated cash, up to 8 concurrent
+  positions) and closes it on a Sell/Strong Sell verdict or a 2x-ATR stop hit, whichever comes
+  first -- same stop shown in `/scan`. It does **not** open short positions on Sell signals. It
+  only advances when this server's watchlist actually gets scanned (via `/scan`, `/autoscan`, or
+  `/alerts`) -- with nothing scheduled, `/portfolio status` will just show yesterday's state. The
+  20%-per-position / 8-position sizing is a simple, arbitrary rule, not a risk-optimized one --
+  it exists so the simulation reflects the bot's actual signals, not so it reflects good position
+  sizing practice.
 - **Persistence** is a flat JSON file (`data/watchlists.json`). Fine for one server or a few;
   swap in a real database if you're running this across many servers.
 - Nothing here is financial advice.

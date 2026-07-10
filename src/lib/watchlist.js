@@ -3,6 +3,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { createPortfolio } = require("./portfolio");
 
 const DATA_FILE = path.join(__dirname, "..", "..", "data", "watchlists.json");
 
@@ -223,6 +224,34 @@ function allGuildsWithAlertDigestSchedule() {
   return Object.entries(all).filter(([, g]) => g.alertDigestSchedule);
 }
 
+function getPortfolio(guildId) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  return guild.portfolio || null;
+}
+
+function startPortfolio(guildId, startingCash) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.portfolio = createPortfolio(startingCash);
+  saveAll(all);
+  return guild.portfolio;
+}
+
+function savePortfolio(guildId, portfolio) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.portfolio = portfolio;
+  saveAll(all);
+}
+
+function resetPortfolio(guildId) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.portfolio = null;
+  saveAll(all);
+}
+
 module.exports = {
   getGuild, addTicker, addTickers, removeTicker, clearTickers, replaceTickers,
   getAutobuildLastRun, markAutobuildRun, setAutobuildSchedule, allGuildsWithAutobuildSchedule,
@@ -230,5 +259,6 @@ module.exports = {
   setAlerts, markAlertsRun, allGuildsWithAlerts, getLastVerdicts, saveVerdicts,
   logAlert, getAlertHistory,
   setAlertDigestSchedule, markAlertDigestRun, allGuildsWithAlertDigestSchedule,
+  getPortfolio, startPortfolio, savePortfolio, resetPortfolio,
   normalizeSymbol, isValidTicker
 };

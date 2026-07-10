@@ -129,7 +129,59 @@ function alertHistoryEmbed(summary, evaluatedCount) {
   return embed;
 }
 
+function portfolioEmbed(portfolio, currentPrices) {
+  const embed = new EmbedBuilder()
+    .setTitle("📒 Paper Portfolio")
+    .setColor(0x3fa796)
+    .setThumbnail("attachment://logo.png")
+    .setFooter({ text: "Simulated only -- no real money, not financial advice." })
+    .setTimestamp();
+
+  let marketValue = 0;
+  const positionEntries = Object.entries(portfolio.positions);
+  const positionFields = positionEntries.map(([symbol, pos]) => {
+    const price = currentPrices[symbol];
+    const value = price != null ? pos.shares * price : pos.shares * pos.entryPrice;
+    marketValue += value;
+    const pnlPct = price != null ? ((price - pos.entryPrice) / pos.entryPrice) * 100 : null;
+    return {
+      name: `${symbol} · ${pos.shares.toFixed(4)} shares @ $${pos.entryPrice.toFixed(2)}`,
+      value: price != null
+        ? `Now $${price.toFixed(2)} (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%) · Stop $${pos.stopPrice.toFixed(2)}`
+        : `Current price unavailable · Stop $${pos.stopPrice.toFixed(2)}`,
+      inline: false
+    };
+  });
+
+  const totalValue = portfolio.cash + marketValue;
+  const totalReturnPct = ((totalValue - portfolio.startingCash) / portfolio.startingCash) * 100;
+  const wins = portfolio.closedTrades.filter(t => t.pnl > 0).length;
+  const losses = portfolio.closedTrades.filter(t => t.pnl <= 0).length;
+
+  embed.addFields({
+    name: "Summary",
+    value:
+      `Cash: $${portfolio.cash.toFixed(2)} · Open positions value: $${marketValue.toFixed(2)}\n` +
+      `Total value: $${totalValue.toFixed(2)} (${totalReturnPct >= 0 ? "+" : ""}${totalReturnPct.toFixed(2)}% since start)\n` +
+      `Closed trades: ${portfolio.closedTrades.length} (${wins}W / ${losses}L)`,
+    inline: false
+  });
+
+  positionFields.forEach(f => embed.addFields(f));
+
+  if (portfolio.closedTrades.length) {
+    const recent = [...portfolio.closedTrades].slice(-5).reverse();
+    embed.addFields({
+      name: "Recent closed trades",
+      value: recent.map(t => `${t.symbol}: ${t.pnl >= 0 ? "+" : ""}${t.pnl.toFixed(2)} (${t.reason})`).join("\n"),
+      inline: false
+    });
+  }
+
+  return embed;
+}
+
 module.exports = {
-  scanEmbed, alertEmbed, volatilityEmbed, backtestEmbed, alertHistoryEmbed,
+  scanEmbed, alertEmbed, volatilityEmbed, backtestEmbed, alertHistoryEmbed, portfolioEmbed,
   logoAttachment, VERDICT_COLOR
 };

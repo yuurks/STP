@@ -5,8 +5,9 @@ const { analyze, backtest } = require("./lib/indicators");
 const { fetchDailySeries } = require("./lib/marketData");
 const watchlist = require("./lib/watchlist");
 const universe = require("./lib/universe");
+const portfolioLib = require("./lib/portfolio");
 const {
-  scanEmbed, alertEmbed, volatilityEmbed, backtestEmbed, alertHistoryEmbed, logoAttachment
+  scanEmbed, alertEmbed, volatilityEmbed, backtestEmbed, alertHistoryEmbed, portfolioEmbed, logoAttachment
 } = require("./lib/embeds");
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -59,6 +60,22 @@ async function runScan(guildId) {
     await sleep(PACING_MS);
   }
   return results;
+}
+
+// Advances a guild's paper portfolio (if one exists) using whatever scan just ran -- /scan,
+// /autoscan, and /alerts all call this with their results, so the simulation piggybacks on
+// scans that are already happening rather than needing its own scheduled API usage. Returns a
+// short list of human-readable event strings (opens/closes), or null if no portfolio is running.
+function updatePortfolio(guildId, results) {
+  const portfolio = watchlist.getPortfolio(guildId);
+  if (!portfolio) return null;
+  const { portfolio: updated, events } = portfolioLib.applyResults(portfolio, results);
+  watchlist.savePortfolio(guildId, updated);
+  return events.map(e =>
+    e.type === "open"
+      ? `Opened ${e.symbol}: ${e.shares.toFixed(4)} shares @ $${e.price.toFixed(2)}`
+      : `Closed ${e.symbol} (${e.reason}): ${e.pnl >= 0 ? "+" : ""}${e.pnl.toFixed(2)}`
+  );
 }
 
 // Scans a candidate pool (not the watchlist) for volatility, then replaces the watchlist with
@@ -232,6 +249,8 @@ client.once(Events.ClientReady, c => {
         const channel = await client.channels.fetch(channelId);
         const results = await runScan(guildId);
         if (results.length) await channel.send({ embeds: [scanEmbed(results)], files: [logoAttachment()] });
+        const portfolioEvents = updatePortfolio(guildId, results);
+        if (portfolioEvents?.length) await channel.send(`📒 Paper portfolio: ${portfolioEvents.join(" · ")}`);
         watchlist.markAutoscanRun(guildId, now);
       } catch (err) {
         console.error(`Autoscan failed for guild ${guildId}: ${err.message}`);
@@ -246,10 +265,14 @@ client.once(Events.ClientReady, c => {
       try {
         const results = await runScan(guildId);
         const fired = findFiredAlerts(guildId, results);
-        if (fired.length) {
-          for (const r of fired) watchlist.logAlert(guildId, r.symbol, r.verdict, r.last.close, r.atr);
+        const portfolioEvents = updatePortfolio(guildId, results);
+        if (fired.length || portfolioEvents?.length) {
           const channel = await client.channels.fetch(channelId);
-          await channel.send({ embeds: [alertEmbed(fired)], files: [logoAttachment()] });
+          if (fired.length) {
+            for (const r of fired) watchlist.logAlert(guildId, r.symbol, r.verdict, r.last.close, r.atr);
+            await channel.send({ embeds: [alertEmbed(fired)], files: [logoAttachment()] });
+          }
+          if (portfolioEvents?.length) await channel.send(`📒 Paper portfolio: ${portfolioEvents.join(" · ")}`);
         }
         watchlist.markAlertsRun(guildId, now);
       } catch (err) {
@@ -397,7 +420,11 @@ client.on(Events.InteractionCreate, async interaction => {
           await interaction.editReply("Scan ran but returned no usable data — check your `TWELVE_DATA_API_KEY` and ticker symbols.");
           break;
         }
+        const portfolioEvents = updatePortfolio(interaction.guildId, results);
         await interaction.editReply({ embeds: [scanEmbed(results)], files: [logoAttachment()] });
+        if (portfolioEvents?.length) {
+          await interaction.followUp(`📒 Paper portfolio: ${portfolioEvents.join(" · ")}`);
+        }
         break;
       }
 
@@ -532,6 +559,47 @@ client.on(Events.InteractionCreate, async interaction => {
         } else if (sub === "off") {
           watchlist.setAutobuildSchedule(interaction.guildId, null);
           await interaction.reply("Scheduled autobuild turned off.");
+        }
+        break;
+      }
+
+      case "portfolio": {
+        const sub = interaction.options.getSubcommand();
+        if (sub === "start") {
+          const startingCash = Math.min(1000000, Math.max(100, interaction.options.getNumber("starting_cash") || 10000));
+          watchlist.startPortfolio(interaction.guildId, startingCash);
+          await interaction.reply(
+            `Paper portfolio started with $${startingCash.toLocaleString()} in simulated cash -- not real money. ` +
+            "It updates whenever this server's watchlist gets scanned via `/scan`, `/autoscan`, or `/alerts` " +
+            "-- turn one of those on if you want it to progress on its own. Check it with `/portfolio status`."
+          );
+        } else if (sub === "reset") {
+          watchlist.resetPortfolio(interaction.guildId);
+          await interaction.reply("Paper portfolio reset. Run `/portfolio start` to begin a new one.");
+        } else if (sub === "status") {
+          await interaction.deferReply();
+          const portfolio = watchlist.getPortfolio(interaction.guildId);
+          if (!portfolio) {
+            await interaction.editReply("No paper portfolio running yet. Start one with `/portfolio start`.");
+            break;
+          }
+
+          const symbols = Object.keys(portfolio.positions);
+          const currentPrices = {};
+          for (const symbol of symbols) {
+            try {
+              const rows = await fetchDailySeries(symbol, 5);
+              if (rows.length) currentPrices[symbol] = rows[rows.length - 1].close;
+            } catch (err) {
+              console.error(`Portfolio status lookup failed for ${symbol}: ${err.message}`);
+            }
+            await sleep(PACING_MS);
+          }
+
+          await interaction.editReply({
+            embeds: [portfolioEmbed(portfolio, currentPrices)],
+            files: [logoAttachment()]
+          });
         }
         break;
       }
