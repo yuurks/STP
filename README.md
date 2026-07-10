@@ -182,10 +182,16 @@ code in `index.js` -- that still needs to be exercised by hand in a real server.
   positions) and closes it on a Sell/Strong Sell verdict or a 2x-ATR stop hit, whichever comes
   first -- same stop shown in `/scan`. It does **not** open short positions on Sell signals. It
   only advances when this server's watchlist actually gets scanned (via `/scan`, `/autoscan`, or
-  `/alerts`) -- with nothing scheduled, `/portfolio status` will just show yesterday's state. The
-  20%-per-position / 8-position sizing is a simple, arbitrary rule, not a risk-optimized one --
-  it exists so the simulation reflects the bot's actual signals, not so it reflects good position
-  sizing practice.
+  `/alerts`) -- with nothing scheduled, positions won't move until you check. `/portfolio status`
+  additionally re-fetches and re-checks every currently *held* position on its own regardless of
+  whether it's still on the watchlist, specifically so a position can still hit its stop or a
+  sell signal even after its ticker gets removed (or replaced entirely by `/watch autobuild`) --
+  otherwise it would just sit open forever, since no scan would ever look at that symbol again.
+  `/portfolio start` refuses to run if a portfolio is already active, to avoid silently wiping
+  its history -- run `/portfolio reset` first if you actually want to restart. The 20%-per-
+  position / 8-position sizing is a simple, arbitrary rule, not a risk-optimized one -- it exists
+  so the simulation reflects the bot's actual signals, not so it reflects good position sizing
+  practice.
 - **Persistence** is a flat JSON file (`data/watchlists.json`). Fine for one server or a few;
   swap in a real database if you're running this across many servers.
 - Nothing here is financial advice.

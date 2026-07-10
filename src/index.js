@@ -566,6 +566,13 @@ client.on(Events.InteractionCreate, async interaction => {
       case "portfolio": {
         const sub = interaction.options.getSubcommand();
         if (sub === "start") {
+          if (watchlist.getPortfolio(interaction.guildId)) {
+            await interaction.reply({
+              content: "A paper portfolio is already running for this server. Run `/portfolio reset` first if you want to wipe it and start over.",
+              ephemeral: true
+            });
+            break;
+          }
           const startingCash = Math.min(1000000, Math.max(100, interaction.options.getNumber("starting_cash") || 10000));
           watchlist.startPortfolio(interaction.guildId, startingCash);
           await interaction.reply(
@@ -578,22 +585,37 @@ client.on(Events.InteractionCreate, async interaction => {
           await interaction.reply("Paper portfolio reset. Run `/portfolio start` to begin a new one.");
         } else if (sub === "status") {
           await interaction.deferReply();
-          const portfolio = watchlist.getPortfolio(interaction.guildId);
+          let portfolio = watchlist.getPortfolio(interaction.guildId);
           if (!portfolio) {
             await interaction.editReply("No paper portfolio running yet. Start one with `/portfolio start`.");
             break;
           }
 
+          // Fetch fresh data for every held position. This both prices them for display AND
+          // gives them a chance to actually close (stop hit / sell signal) even if their ticker
+          // has since been removed from the watchlist -- or replaced entirely by /watch
+          // autobuild -- which would otherwise leave them stuck open forever, since no scan
+          // would ever look at that symbol again.
           const symbols = Object.keys(portfolio.positions);
+          const positionResults = [];
           const currentPrices = {};
           for (const symbol of symbols) {
             try {
-              const rows = await fetchDailySeries(symbol, 5);
-              if (rows.length) currentPrices[symbol] = rows[rows.length - 1].close;
+              const rows = await fetchDailySeries(symbol);
+              if (rows.length >= 30) {
+                const analysis = analyze(rows);
+                positionResults.push({ symbol, ...analysis });
+                currentPrices[symbol] = analysis.last.close;
+              }
             } catch (err) {
               console.error(`Portfolio status lookup failed for ${symbol}: ${err.message}`);
             }
             await sleep(PACING_MS);
+          }
+
+          if (positionResults.length) {
+            updatePortfolio(interaction.guildId, positionResults);
+            portfolio = watchlist.getPortfolio(interaction.guildId);
           }
 
           await interaction.editReply({
