@@ -1,6 +1,6 @@
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
-const { findUnfilledGap, atr, adx, backtest } = require("../src/lib/indicators");
+const { findUnfilledGap, atr, adx, backtest, scoreAt } = require("../src/lib/indicators");
 
 function row(date, high, low, close, volume = 1000000) {
   return { date, open: (high + low) / 2, high, low, close, volume };
@@ -110,6 +110,40 @@ describe("adx", () => {
     const trendLast = adx(series("trend", 40), 14).at(-1);
     const choppyLast = adx(series("choppy", 40), 14).at(-1);
     assert.ok(trendLast > choppyLast, `expected trend (${trendLast}) > choppy (${choppyLast})`);
+  });
+});
+
+describe("scoreAt - Golden Cross / Death Cross", () => {
+  // scoreAt takes already-enriched rows (sma50/sma200 etc. precomputed), so these are built by
+  // hand rather than needing hundreds of days of raw OHLC just to get two SMA values to cross.
+  function enriched(sma50, sma200) {
+    return { sma50, sma200, sma20: null, ema12: null, ema26: null, rsi: null, macd: null, macdSignal: null, bbUpper: null, bbLower: null, close: 100 };
+  }
+
+  test("scores a golden cross when 50-SMA crosses above 200-SMA", () => {
+    const rows = [enriched(95, 100), enriched(101, 100)];
+    const { score, notes } = scoreAt(rows, 1);
+    assert.ok(notes.some(n => n.includes("Golden Cross")));
+    assert.ok(score >= 2);
+  });
+
+  test("scores a death cross when 50-SMA crosses below 200-SMA", () => {
+    const rows = [enriched(101, 100), enriched(99, 100)];
+    const { score, notes } = scoreAt(rows, 1);
+    assert.ok(notes.some(n => n.includes("Death Cross")));
+    assert.ok(score <= -2);
+  });
+
+  test("does not fire when 50-SMA stays on the same side of 200-SMA", () => {
+    const rows = [enriched(105, 100), enriched(106, 100)];
+    const { notes } = scoreAt(rows, 1);
+    assert.ok(!notes.some(n => n.includes("Cross")));
+  });
+
+  test("does not fire without 200 days of history (sma200 null)", () => {
+    const rows = [enriched(95, null), enriched(101, null)];
+    const { notes } = scoreAt(rows, 1);
+    assert.ok(!notes.some(n => n.includes("Cross")));
   });
 });
 

@@ -203,6 +203,14 @@ function scoreAt(enrichedRows, i) {
   let score = 0;
   const notes = [];
 
+  // Golden Cross / Death Cross: the 50-day SMA crossing the 200-day SMA. A specifically-named,
+  // widely-watched longer-horizon signal, distinct from the faster 20/50 pair below -- checked
+  // first so it isn't crowded out of the truncated "top 2 notes" shown in Discord embeds.
+  if (prev.sma50 != null && prev.sma200 != null && last.sma50 != null && last.sma200 != null) {
+    if (prev.sma50 <= prev.sma200 && last.sma50 > last.sma200) { score += 2; notes.push("Golden Cross: 50-SMA crossed above 200-SMA"); }
+    else if (prev.sma50 >= prev.sma200 && last.sma50 < last.sma200) { score -= 2; notes.push("Death Cross: 50-SMA crossed below 200-SMA"); }
+  }
+
   if (last.sma20 != null && last.sma50 != null) {
     if (last.sma20 > last.sma50) { score += 1; notes.push("20-SMA above 50-SMA (uptrend)"); }
     else { score -= 1; notes.push("20-SMA below 50-SMA (downtrend)"); }
@@ -273,7 +281,10 @@ function findUnfilledGap(rows) {
 // full pipeline: raw OHLC rows -> enriched rows + latest score/verdict/notes
 function analyze(rows) {
   const closes = rows.map(r => r.close);
-  const smaData = { s20: sma(closes, 20), s50: sma(closes, 50) };
+  // sma200 needs 200 bars to ever produce a value -- null (and the Golden/Death Cross check
+  // that depends on it) until there's enough history, same graceful degradation as every other
+  // indicator here.
+  const smaData = { s20: sma(closes, 20), s50: sma(closes, 50), s200: sma(closes, 200) };
   const emaData = { e12: ema(closes, 12), e26: ema(closes, 26) };
   const rsiData = rsi(closes, 14);
   const macdData = macd(closes);
@@ -281,7 +292,7 @@ function analyze(rows) {
 
   const enriched = rows.map((r, i) => ({
     ...r,
-    sma20: smaData.s20[i], sma50: smaData.s50[i],
+    sma20: smaData.s20[i], sma50: smaData.s50[i], sma200: smaData.s200[i],
     ema12: emaData.e12[i], ema26: emaData.e26[i],
     rsi: rsiData[i],
     macd: macdData.line[i], macdSignal: macdData.signal[i], macdHist: macdData.hist[i],

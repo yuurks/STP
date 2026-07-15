@@ -1,8 +1,8 @@
 # Signal Deck — Discord Bot
 
 A Discord version of the Signal Deck scanner: technical indicators (SMA, EMA, RSI, MACD,
-Bollinger Bands) blended into a composite Buy/Sell verdict, delivered as slash commands and
-optional scheduled posts in a channel.
+Bollinger Bands, ADX, Golden/Death Cross) blended into a composite Buy/Sell verdict, delivered
+as slash commands and optional scheduled posts in a channel.
 
 It **posts signals only** — it never places real trades and isn't connected to any brokerage.
 
@@ -75,10 +75,11 @@ npm test
 ```
 
 Uses Node's built-in test runner (`node --test`, no extra dependency). Covers the pure math in
-`src/lib/indicators.js` -- `findUnfilledGap`, `atr`, `adx`, and `backtest` (including a real
+`src/lib/indicators.js` -- `findUnfilledGap`, `atr`, `adx`, `backtest` (including a real
 no-lookahead check, not just a hand-wave: it runs two otherwise-identical price series that only
 diverge after a cutoff day, and asserts every signal evaluated before that day produces an
-identical verdict regardless of what happens afterward) -- and the paper-portfolio logic in
+identical verdict regardless of what happens afterward), and `scoreAt`'s Golden/Death Cross
+detection -- and the paper-portfolio logic in
 `src/lib/portfolio.js` (position sizing, stop-hit vs. sell-signal exits, and a regression test
 for a real bug this suite caught: a stop-out and an unrelated same-pass Buy verdict on the same
 symbol could otherwise re-open the position it just closed). It doesn't cover the Discord-facing
@@ -161,6 +162,11 @@ code in `index.js` -- that still needs to be exercised by hand in a real server.
   trades quantity for quality — expect noticeably fewer Buy/Sell verdicts than before. It does
   **not** make signals more likely to be profitable, only less likely to be a false positive
   from a well-known failure mode (crossover indicators whipsawing in sideways markets).
+- **Golden Cross / Death Cross**: the 50-day SMA crossing the 200-day SMA, a specifically-named,
+  widely-watched longer-horizon signal distinct from the faster 20/50 SMA pair already used
+  elsewhere in the score. Needs ~200 days of history to ever fire (the default fetch window was
+  bumped from 120 to 250 days specifically for this) -- newer tickers without that much history
+  just won't show it, same graceful "not enough data" behavior as every other indicator here.
 - **`/backtest` and `/alerts history` are the only things that actually validate this bot** —
   everything else is textbook indicator theory that sounds reasonable but has never been checked
   against real outcomes. `/backtest` replays history fast but on necessarily small samples

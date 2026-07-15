@@ -4,7 +4,9 @@
 // just make fetchDailySeries() resolve to the same { date, open, high, low, close, volume }[] shape,
 // sorted oldest -> newest.
 
-async function fetchDailySeries(symbol, outputsize = 120) {
+// Default bumped from 120 to 250 so there's enough history for a 200-day SMA (Golden/Death
+// Cross) in the common case -- still a single request regardless of size, no extra API cost.
+async function fetchDailySeries(symbol, outputsize = 250) {
   const apiKey = process.env.TWELVE_DATA_API_KEY;
   if (!apiKey) throw new Error("Missing TWELVE_DATA_API_KEY in your .env file");
 
