@@ -92,7 +92,7 @@ code in `index.js` -- that still needs to be exercised by hand in a real server.
 | `/watch remove ticker:AAPL` | Remove one |
 | `/watch list` | Show the current watchlist |
 | `/watch clear` | Remove every ticker from the watchlist |
-| `/watch autobuild universe:both sample:100 count:15` | **One-off**: sample random candidates from `stocks.txt`/`crypto.txt`, rank by recent volatility, and **replace** the watchlist with the most volatile `count` of them. Runs in the background and posts results when done |
+| `/watch autobuild universe:both count:15` | **One-off**: scan 300 candidates from `stocks.txt`/`crypto.txt` for the biggest potential movers, and **replace** the watchlist with the top `count`. Runs in the background and posts results when done |
 | `/autobuild on channel:#signals interval_hours:24 ...` | **Recurring** version of the above — automatically reruns `/watch autobuild` on a schedule (min 24h) and posts to a channel, instead of you triggering it manually each time |
 | `/autobuild off` | Turn off scheduled autobuild |
 | `/scan` | Run the scanner on the watchlist right now, posts a ranked embed |
@@ -124,14 +124,16 @@ code in `index.js` -- that still needs to be exercised by hand in a real server.
   and only posts when it flips (e.g. Neutral -> Buy). Since indicators are computed from daily
   candles, meaningful changes typically happen at most once a day regardless of how often you
   set it to check.
-- **`/watch autobuild` is expensive and destructive**: it uses one API request per candidate
-  checked (up to 300), can take nearly 40 minutes for a full-size sample, and *replaces* the
-  entire watchlist rather than merging into it. The 24h-per-server cooldown exists because a
-  single large run can eat a large chunk of the daily request quota by itself. Volatility here
-  is just the standard deviation of daily % price changes over the fetched window — a measure
-  of how much a ticker moves, not a prediction of which direction it'll move next. Candidates
-  with a confirmed weak/no trend (ADX < 15) are excluded, since pure volatility with nothing
-  behind it is as often a spike about to mean-revert as it is a real opportunity. When sampling
+- **`/watch autobuild` is expensive and destructive**: there's no user-facing "sample size" to
+  tune — it always scans 300 candidates (one API request each, no way around that on the free
+  tier) to actually find the biggest potential movers rather than a smaller, less representative
+  slice, which takes nearly 40 minutes. It *replaces* the entire watchlist rather than merging
+  into it. The 24h-per-server cooldown exists because a single run eats a large chunk of the
+  daily request quota by itself. "Biggest potential movers" here means highest recent volatility
+  -- the standard deviation of daily % price changes over the fetched window -- a measure of how
+  much a ticker moves, not a prediction of which direction it'll move next. Candidates with a
+  confirmed weak/no trend (ADX < 15) are excluded, since pure volatility with nothing behind it
+  is as often a spike about to mean-revert as it is a real opportunity. When scanning
   `universe:both`, stocks and crypto are ranked and picked separately rather than pooled into
   one global ranking — crypto's baseline volatility runs structurally higher than stocks', so a
   single ranking would crowd out stocks almost every time and leave you with a concentrated,

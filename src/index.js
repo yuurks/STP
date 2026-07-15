@@ -79,10 +79,14 @@ function updatePortfolio(guildId, results) {
 }
 
 // Scans a candidate pool (not the watchlist) for volatility, then replaces the watchlist with
-// the most volatile ones found. Runs detached from the interaction -- with up to 300 candidates
-// at 7.5s pacing this can take well over the 15-minute window Discord gives an interaction to
-// respond, so progress/results are posted as normal channel messages instead of interaction replies.
+// the most volatile ones found. Runs detached from the interaction -- at 300 candidates and 7.5s
+// pacing this takes well over the 15-minute window Discord gives an interaction to respond, so
+// progress/results are posted as normal channel messages instead of interaction replies.
 const NO_TREND_ADX = 15;
+// Always scans the max sustainable sample rather than asking the user to pick a size -- the
+// point is finding the biggest potential movers, which means checking as much of the candidate
+// pool as the free-tier request budget allows, not an arbitrary smaller default.
+const AUTOBUILD_SAMPLE_SIZE = 300;
 async function runAutobuild(guildId, channel, candidates, count, universeChoice) {
   const found = [];
   for (const symbol of candidates) {
@@ -127,15 +131,15 @@ async function runAutobuild(guildId, channel, candidates, count, universeChoice)
   }
 
   if (!top.length) {
-    await channel.send("Volatility scan finished, but no candidates returned usable data — watchlist left unchanged.");
+    await channel.send("Scan finished, but no candidates returned usable data — watchlist left unchanged.");
     return;
   }
 
   const tickers = watchlist.replaceTickers(guildId, top.map(t => t.symbol));
   await channel.send({
-    content: `Volatility scan complete: checked ${found.length}/${candidates.length} candidates ` +
+    content: `Scan complete: checked ${found.length}/${candidates.length} candidates ` +
       `(${found.length - eligible.length} excluded for having no real trend). ` +
-      `Watchlist replaced with the ${tickers.length} most volatile.`,
+      `Watchlist replaced with the ${tickers.length} biggest potential movers.`,
     embeds: [volatilityEmbed(top)],
     files: [logoAttachment()]
   });
@@ -281,7 +285,7 @@ client.once(Events.ClientReady, c => {
     }
 
     for (const [guildId, guildData] of watchlist.allGuildsWithAutobuildSchedule()) {
-      const { channelId, intervalHours, universe: universeChoice, sample, count } = guildData.autobuildSchedule;
+      const { channelId, intervalHours, universe: universeChoice, count } = guildData.autobuildSchedule;
       // Shares the same cooldown clock as manual /watch autobuild, so a scheduled and a manual
       // run can never overlap/double-spend the daily request quota.
       const lastRun = watchlist.getAutobuildLastRun(guildId);
@@ -291,10 +295,10 @@ client.once(Events.ClientReady, c => {
       try {
         const pool = universe.loadUniverse(universeChoice);
         if (!pool.length) continue;
-        const candidates = universe.sample(pool, sample);
+        const candidates = universe.sample(pool, AUTOBUILD_SAMPLE_SIZE);
         const channel = await client.channels.fetch(channelId);
         watchlist.markAutobuildRun(guildId, now); // mark before the long scan starts, not after
-        await channel.send(`Scheduled volatility scan starting: checking ${candidates.length} candidates from the ${universeChoice} pool...`);
+        await channel.send(`Scheduled scan starting: checking ${candidates.length} candidates from the ${universeChoice} pool for the biggest potential movers...`);
         await runAutobuild(guildId, channel, candidates, count, universeChoice);
       } catch (err) {
         console.error(`Scheduled autobuild failed for guild ${guildId}: ${err.message}`);
@@ -384,7 +388,6 @@ client.on(Events.InteractionCreate, async interaction => {
           }
 
           const universeChoice = interaction.options.getString("universe") || "both";
-          const sample = Math.min(300, Math.max(10, interaction.options.getInteger("sample") || 100));
           const count = Math.min(50, Math.max(1, interaction.options.getInteger("count") || 15));
 
           const pool = universe.loadUniverse(universeChoice);
@@ -392,12 +395,12 @@ client.on(Events.InteractionCreate, async interaction => {
             await interaction.reply({ content: "Candidate pool is empty — stocks.txt/crypto.txt may be missing.", ephemeral: true });
             break;
           }
-          const candidates = universe.sample(pool, sample);
+          const candidates = universe.sample(pool, AUTOBUILD_SAMPLE_SIZE);
           const etaMin = Math.ceil((candidates.length * PACING_MS) / 60000);
 
           watchlist.markAutobuildRun(interaction.guildId, Date.now());
           await interaction.reply(
-            `Scanning ${candidates.length} random candidates from the ${universeChoice} pool for volatility — ` +
+            `Scanning ${candidates.length} candidates from the ${universeChoice} pool for the biggest potential movers — ` +
             `this'll take about ${etaMin} min. I'll post here and replace the watchlist with the top ${count} when done.`
           );
           runAutobuild(interaction.guildId, interaction.channel, candidates, count, universeChoice).catch(err => {
@@ -546,14 +549,13 @@ client.on(Events.InteractionCreate, async interaction => {
           const channel = interaction.options.getChannel("channel");
           const intervalHours = Math.max(24, interaction.options.getInteger("interval_hours") || 24);
           const universeChoice = interaction.options.getString("universe") || "both";
-          const sample = Math.min(300, Math.max(10, interaction.options.getInteger("sample") || 100));
           const count = Math.min(50, Math.max(1, interaction.options.getInteger("count") || 15));
           watchlist.setAutobuildSchedule(interaction.guildId, {
-            channelId: channel.id, intervalHours, universe: universeChoice, sample, count
+            channelId: channel.id, intervalHours, universe: universeChoice, count
           });
           await interaction.reply(
-            `Scheduled autobuild on: every ${intervalHours}h, sampling ${sample} candidates from the ${universeChoice} pool, ` +
-            `keeping the top ${count} most volatile, posting to ${channel}. Shares its cooldown with manual \`/watch autobuild\`, ` +
+            `Scheduled autobuild on: every ${intervalHours}h, scanning the ${universeChoice} pool for the biggest potential movers, ` +
+            `keeping the top ${count}, posting to ${channel}. Shares its cooldown with manual \`/watch autobuild\`, ` +
             "so running that separately will push back the next scheduled run."
           );
         } else if (sub === "off") {
