@@ -33,4 +33,32 @@ async function fetchDailySeries(symbol, outputsize = 250) {
     .reverse(); // Twelve Data returns newest-first; indicators expect oldest-first
 }
 
-module.exports = { fetchDailySeries };
+// Intraday candles -- used for "today's move" charts rather than indicator math. Free-tier
+// interval options include 15min; 26 bars covers a full ~6.5hr stock session with room to
+// spare, and for round-the-clock crypto pairs it's simply the trailing ~6.5 hours.
+async function fetchIntradaySeries(symbol, interval = "15min", outputsize = 26) {
+  const apiKey = process.env.TWELVE_DATA_API_KEY;
+  if (!apiKey) throw new Error("Missing TWELVE_DATA_API_KEY in your .env file");
+
+  const encodedSymbol = encodeURIComponent(symbol).replace(/%2F/g, "/");
+  const url = `https://api.twelvedata.com/time_series?symbol=${encodedSymbol}&interval=${interval}&outputsize=${outputsize}&apikey=${apiKey}`;
+  const res = await fetch(url);
+  const data = await res.json();
+
+  if (data.status === "error" || !Array.isArray(data.values)) {
+    throw new Error(data.message || `No intraday data returned for "${symbol}"`);
+  }
+
+  return data.values
+    .map(v => ({
+      time: v.datetime,
+      open: parseFloat(v.open),
+      high: parseFloat(v.high),
+      low: parseFloat(v.low),
+      close: parseFloat(v.close),
+      volume: parseInt(v.volume, 10) || 0
+    }))
+    .reverse();
+}
+
+module.exports = { fetchDailySeries, fetchIntradaySeries };

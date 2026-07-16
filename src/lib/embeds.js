@@ -184,7 +184,39 @@ function portfolioEmbed(portfolio, currentPrices) {
   return embed;
 }
 
+function formatDollarVolume(v) {
+  if (!v) return null;
+  if (v >= 1_000_000_000) return `$${(v / 1_000_000_000).toFixed(1)}B`;
+  return `$${(v / 1_000_000).toFixed(1)}M`;
+}
+
+function shortsEmbed(winner, loser, label) {
+  const embed = new EmbedBuilder()
+    .setTitle(`🎬 Today's Biggest Movers — ${label}`)
+    .setColor(0x0ca34a)
+    .setThumbnail("attachment://logo.png")
+    .setFooter({ text: "Technical pattern data, not financial advice. Attached file is the ready-to-record Short -- open it locally in a browser." })
+    .setTimestamp();
+
+  embed.addFields(
+    {
+      name: `🟢 Winner: ${winner.symbol} · ${winner.pctChange >= 0 ? "+" : ""}${winner.pctChange.toFixed(1)}%`,
+      value: `Open $${winner.intraday.closes[0].toFixed(2)} → Now $${winner.price.toFixed(2)}` +
+        (formatDollarVolume(winner.dollarVolume) ? ` · Avg. volume: ${formatDollarVolume(winner.dollarVolume)}/day` : ""),
+      inline: false
+    },
+    {
+      name: `🔴 Loser: ${loser.symbol} · ${loser.pctChange >= 0 ? "+" : ""}${loser.pctChange.toFixed(1)}%`,
+      value: `Open $${loser.intraday.closes[0].toFixed(2)} → Now $${loser.price.toFixed(2)}` +
+        (formatDollarVolume(loser.dollarVolume) ? ` · Avg. volume: ${formatDollarVolume(loser.dollarVolume)}/day` : ""),
+      inline: false
+    }
+  );
+
+  return embed;
+}
+
 module.exports = {
   scanEmbed, alertEmbed, volatilityEmbed, backtestEmbed, alertHistoryEmbed, portfolioEmbed,
-  logoAttachment, VERDICT_COLOR
+  shortsEmbed, logoAttachment, VERDICT_COLOR
 };

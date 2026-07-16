@@ -1,4 +1,6 @@
 node_modules/
 .env
 data/watchlists.json
+data/movers.json
+data/movers-short.html
 .claude/settings.local.json

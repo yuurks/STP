@@ -4,7 +4,18 @@
       "Bash(node --test test/portfolio.test.js)",
       "Bash(node --test test/indicators.test.js)",
       "Bash(node --check src/lib/portfolio.js)",
-      "Bash(node --check src/lib/embeds.js)"
+      "Bash(node --check src/lib/embeds.js)",
+      "Bash(node --check scripts/find-movers.js)",
+      "Bash(node scripts/validate_palette.js --help)",
+      "Bash(node scripts/validate_palette.js \"#00e676,#ff5252,#5865f2\" --mode dark --surface \"#0b0f14\")",
+      "Bash(node scripts/validate_palette.js \"#0ca34a,#e0433d,#5865f2\" --mode dark --surface \"#0b0f14\")",
+      "Bash(base64 -w0 assets/logo.png)",
+      "Read(//tmp/**)",
+      "Bash(node -e ' *)",
+      "Bash(node scripts/generate-short.js)",
+      "Bash(node --check src/lib/shorts.js)",
+      "Bash(node --check scripts/generate-short.js)",
+      "Bash(npm test *)"
     ]
   }
 }

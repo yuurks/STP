@@ -1,5 +1,5 @@
 require("dotenv").config();
-const { Client, GatewayIntentBits, Events } = require("discord.js");
+const { Client, GatewayIntentBits, Events, AttachmentBuilder } = require("discord.js");
 
 const {
   analyze, backtest, dailyReturns, avgDollarVolume, selectDiversified
@@ -8,8 +8,9 @@ const { fetchDailySeries } = require("./lib/marketData");
 const watchlist = require("./lib/watchlist");
 const universe = require("./lib/universe");
 const portfolioLib = require("./lib/portfolio");
+const shorts = require("./lib/shorts");
 const {
-  scanEmbed, alertEmbed, volatilityEmbed, backtestEmbed, alertHistoryEmbed, portfolioEmbed, logoAttachment
+  scanEmbed, alertEmbed, volatilityEmbed, backtestEmbed, alertHistoryEmbed, portfolioEmbed, shortsEmbed, logoAttachment
 } = require("./lib/embeds");
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -221,6 +222,35 @@ async function runAlertHistory(channel, eligible) {
   });
 }
 
+// The scheduled Shorts drop samples a much smaller slice than /watch autobuild (300) --
+// it runs twice a day automatically, so a smaller number keeps the combined daily cost from
+// eating into the quota the rest of the bot's features (autoscan, alerts, etc.) depend on.
+const SHORTS_SAMPLE_SIZE = 100;
+
+// America/New_York wall-clock time, used to fire the Shorts drop at a fixed local time
+// (4:00pm/8:00pm ET) regardless of where the server hosting the bot actually runs.
+function nowInEastern() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York", hour12: false,
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
+  }).formatToParts(new Date());
+  const get = type => parts.find(p => p.type === type).value;
+  return { date: `${get("year")}-${get("month")}-${get("day")}`, hhmm: `${get("hour")}:${get("minute")}` };
+}
+
+// Scans, generates the finished HTML, and posts both the stats embed and the ready-to-record
+// file to the given channel. `label` is just for the embed title ("Stocks" / "Crypto").
+async function runShortsDrop(channel, universeKind, label) {
+  const { winner, loser } = await shorts.findMover(universeKind, SHORTS_SAMPLE_SIZE);
+  if (!winner || !loser) {
+    await channel.send(`Shorts scan (${label}) finished, but didn't find usable data -- skipped.`);
+    return;
+  }
+  const html = shorts.generateShortHtml(winner, loser, universeKind);
+  const file = new AttachmentBuilder(Buffer.from(html, "utf8"), { name: `stp-short-${universeKind}.html` });
+  await channel.send({ embeds: [shortsEmbed(winner, loser, label)], files: [file] });
+}
+
 // Fires only for tickers whose verdict is actionable (not Neutral) and has changed since the
 // last check -- so a ticker sitting at "Buy" doesn't re-alert every interval, only on the
 // Neutral->Buy (or Buy->Sell, etc.) transition.
@@ -316,6 +346,34 @@ client.once(Events.ClientReady, c => {
         await runAlertHistory(channel, eligible);
       } catch (err) {
         console.error(`Alert digest failed for guild ${guildId}: ${err.message}`);
+      }
+    }
+
+    // Two fixed daily drops (4:00pm ET stocks, 8:00pm ET crypto) rather than an interval --
+    // `date !== lastRunDate` guards against firing more than once during that minute's window
+    // and survives restarts since the date is persisted, not just held in memory.
+    const { date, hhmm } = nowInEastern();
+    for (const [guildId, guildData] of watchlist.allGuildsWithShortsSchedule()) {
+      const { stocksChannelId, cryptoChannelId, lastStockRunDate, lastCryptoRunDate } = guildData.shortsSchedule;
+
+      if (hhmm === "16:00" && lastStockRunDate !== date) {
+        watchlist.markShortRun(guildId, "stock", date);
+        try {
+          const channel = await client.channels.fetch(stocksChannelId);
+          await runShortsDrop(channel, "stocks", "Stocks");
+        } catch (err) {
+          console.error(`Shorts (stocks) drop failed for guild ${guildId}: ${err.message}`);
+        }
+      }
+
+      if (hhmm === "20:00" && lastCryptoRunDate !== date) {
+        watchlist.markShortRun(guildId, "crypto", date);
+        try {
+          const channel = await client.channels.fetch(cryptoChannelId);
+          await runShortsDrop(channel, "crypto", "Crypto");
+        } catch (err) {
+          console.error(`Shorts (crypto) drop failed for guild ${guildId}: ${err.message}`);
+        }
       }
     }
   }, 60 * 1000);
@@ -558,6 +616,39 @@ client.on(Events.InteractionCreate, async interaction => {
         } else if (sub === "off") {
           watchlist.setAutobuildSchedule(interaction.guildId, null);
           await interaction.reply("Scheduled autobuild turned off.");
+        }
+        break;
+      }
+
+      case "shorts": {
+        const sub = interaction.options.getSubcommand();
+        if (sub === "on") {
+          const stocksChannel = interaction.options.getChannel("stocks_channel");
+          const cryptoChannel = interaction.options.getChannel("crypto_channel");
+          watchlist.setShortsSchedule(interaction.guildId, {
+            stocksChannelId: stocksChannel.id, cryptoChannelId: cryptoChannel.id,
+            lastStockRunDate: null, lastCryptoRunDate: null
+          });
+          await interaction.reply(
+            `Shorts on: stock winner/loser drops daily at 4:00pm ET in ${stocksChannel}, ` +
+            `crypto at 8:00pm ET in ${cryptoChannel}. Each post includes a ready-to-open HTML file ` +
+            "you can screen-record for a Short -- posting to YouTube is still on you."
+          );
+        } else if (sub === "off") {
+          watchlist.setShortsSchedule(interaction.guildId, null);
+          await interaction.reply("Shorts schedule turned off.");
+        } else if (sub === "now") {
+          const which = interaction.options.getString("which") || "both";
+          await interaction.reply(`Running a Shorts scan now (${which}) -- this'll take a few minutes, I'll post here when it's ready.`);
+          (async () => {
+            try {
+              if (which === "stocks" || which === "both") await runShortsDrop(interaction.channel, "stocks", "Stocks");
+              if (which === "crypto" || which === "both") await runShortsDrop(interaction.channel, "crypto", "Crypto");
+            } catch (err) {
+              console.error(`Manual shorts run failed for guild ${interaction.guildId}: ${err.message}`);
+              interaction.channel.send("Shorts scan failed partway through — check the bot logs.").catch(() => {});
+            }
+          })();
         }
         break;
       }
