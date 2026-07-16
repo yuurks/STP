@@ -7,8 +7,14 @@ const { createPortfolio } = require("./portfolio");
 
 const DATA_FILE = path.join(__dirname, "..", "..", "data", "watchlists.json");
 // Logged once at startup so a Railway (or any host's) persistent volume can be mounted at the
-// exact right directory -- get this wrong and the volume silently does nothing.
+// exact right directory -- get this wrong and the volume silently does nothing. Railway sets
+// RAILWAY_VOLUME_MOUNT_PATH automatically ONLY when a volume is genuinely attached to this
+// service -- if that comes back blank, there is no volume here no matter what the dashboard
+// showed, and nothing will ever persist regardless of the DATA_FILE path above.
 console.log(`Watchlist data file: ${DATA_FILE}`);
+console.log(`Railway volume mount path (blank = no volume attached): ${process.env.RAILWAY_VOLUME_MOUNT_PATH || "(not set)"}`);
+console.log(`Railway volume name: ${process.env.RAILWAY_VOLUME_NAME || "(not set)"}`);
+console.log(`Data file already exists at startup: ${fs.existsSync(DATA_FILE)}`);
 
 // Accepts stock tickers (AAPL), and crypto/forex pairs written as BTC/USD, BTC-USD, or btcusd
 // (for common cases), normalizing all to Twelve Data's expected "BASE/QUOTE" or plain format.
