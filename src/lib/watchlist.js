@@ -6,6 +6,9 @@ const path = require("path");
 const { createPortfolio } = require("./portfolio");
 
 const DATA_FILE = path.join(__dirname, "..", "..", "data", "watchlists.json");
+// Logged once at startup so a Railway (or any host's) persistent volume can be mounted at the
+// exact right directory -- get this wrong and the volume silently does nothing.
+console.log(`Watchlist data file: ${DATA_FILE}`);
 
 // Accepts stock tickers (AAPL), and crypto/forex pairs written as BTC/USD, BTC-USD, or btcusd
 // (for common cases), normalizing all to Twelve Data's expected "BASE/QUOTE" or plain format.
