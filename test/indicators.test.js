@@ -1,6 +1,9 @@
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
-const { findUnfilledGap, atr, adx, backtest, scoreAt } = require("../src/lib/indicators");
+const {
+  findUnfilledGap, atr, adx, backtest, scoreAt,
+  dailyReturns, correlation, avgDollarVolume, selectDiversified
+} = require("../src/lib/indicators");
 
 function row(date, high, low, close, volume = 1000000) {
   return { date, open: (high + low) / 2, high, low, close, volume };
@@ -235,5 +238,111 @@ describe("backtest", () => {
     assert.ok(sellEntry, "expected at least one Sell signal from this whipsaw shape");
     assert.equal(sellEntry.stoppedCount, sellEntry.count, "expected every Sell signal here to get stopped out by the sustained rally");
     assert.ok(sellEntry.avgReturn > 0, "a stopped-out Sell's recorded return should reflect the adverse (upward) move, not the day-N close");
+  });
+});
+
+describe("dailyReturns", () => {
+  test("computes simple percentage returns between consecutive closes", () => {
+    const returns = dailyReturns([100, 110, 99]);
+    assert.equal(returns.length, 2);
+    assert.ok(Math.abs(returns[0] - 0.10) < 1e-9);
+    assert.ok(Math.abs(returns[1] - (-0.10)) < 1e-9);
+  });
+});
+
+describe("correlation", () => {
+  test("is ~1 for two identical series", () => {
+    const a = [0.01, -0.02, 0.03, 0.01, -0.01, 0.02];
+    assert.ok(Math.abs(correlation(a, a) - 1) < 1e-9);
+  });
+
+  test("is ~-1 for two exactly inverse series", () => {
+    const a = [0.01, -0.02, 0.03, 0.01, -0.01, 0.02];
+    const b = a.map(v => -v);
+    assert.ok(Math.abs(correlation(a, b) - (-1)) < 1e-9);
+  });
+
+  test("is near 0 for genuinely unrelated series", () => {
+    const a = [0.01, -0.02, 0.03, 0.01, -0.01, 0.02, 0.015, -0.025];
+    const b = [0.02, 0.01, -0.03, 0.02, 0.01, -0.015, -0.01, 0.005];
+    assert.ok(Math.abs(correlation(a, b)) < 0.6, `expected low correlation, got ${correlation(a, b)}`);
+  });
+
+  test("returns 0 instead of throwing on degenerate input", () => {
+    assert.equal(correlation([], []), 0);
+    assert.equal(correlation([0.01], [0.02]), 0); // too short
+    assert.equal(correlation([0, 0, 0], [0.01, 0.02, 0.03]), 0); // zero variance
+  });
+});
+
+describe("avgDollarVolume", () => {
+  test("averages price * volume over the trailing window", () => {
+    const rows = [
+      row("d0", 10, 9, 10, 1000),
+      row("d1", 10, 9, 20, 2000),
+      row("d2", 10, 9, 30, 3000)
+    ];
+    // (10*1000 + 20*2000 + 30*3000) / 3 = (10000 + 40000 + 90000) / 3
+    assert.ok(Math.abs(avgDollarVolume(rows, 3) - (10000 + 40000 + 90000) / 3) < 1e-6);
+  });
+
+  test("returns 0 for an empty series", () => {
+    assert.equal(avgDollarVolume([], 20), 0);
+  });
+});
+
+describe("selectDiversified", () => {
+  function candidate(symbol, volatility, returns) {
+    return { symbol, volatility, returns };
+  }
+
+  test("picks the highest-volatility candidates when nothing is correlated", () => {
+    const candidates = [
+      candidate("A", 10, [0.01, 0.02, -0.01]),
+      candidate("B", 5, [0.03, -0.02, 0.01]),
+      candidate("C", 15, [-0.01, 0.01, 0.02])
+    ];
+    const picked = selectDiversified(candidates, 2, 0.99);
+    assert.deepEqual(picked.map(c => c.symbol), ["C", "A"]);
+  });
+
+  test("skips a candidate too correlated with one already picked", () => {
+    const base = [0.01, -0.02, 0.03, 0.01, -0.01, 0.02];
+    const candidates = [
+      candidate("HIGH_VOL", 20, base),
+      candidate("CLONE", 18, base), // near-identical returns to HIGH_VOL -- should be skipped
+      // Note: this series happens to be ~-0.71 correlated with `base`, not just "different" --
+      // that's deliberate, see the negative-correlation test below.
+      candidate("DIFFERENT", 10, [-0.02, 0.01, -0.03, 0.02, 0.01, -0.015])
+    ];
+    const picked = selectDiversified(candidates, 2, 0.7);
+    assert.ok(picked.some(c => c.symbol === "HIGH_VOL"));
+    assert.ok(!picked.some(c => c.symbol === "CLONE"), "CLONE should be skipped as too correlated with HIGH_VOL");
+    assert.ok(picked.some(c => c.symbol === "DIFFERENT"));
+  });
+
+  test("does not skip a candidate that's strongly *negatively* correlated -- that's good diversification, not bad", () => {
+    const base = [0.01, -0.02, 0.03, 0.01, -0.01, 0.02];
+    const inverse = base.map(v => -v); // correlation ~-1 with base
+    const candidates = [
+      candidate("HIGH_VOL", 20, base),
+      candidate("INVERSE", 15, inverse)
+    ];
+    const picked = selectDiversified(candidates, 2, 0.7);
+    assert.equal(picked.length, 2);
+    assert.ok(picked.some(c => c.symbol === "INVERSE"), "a strongly anti-correlated candidate should be kept, not excluded");
+  });
+
+  test("backfills from correlated candidates rather than returning fewer than requested", () => {
+    const base = [0.01, -0.02, 0.03, 0.01, -0.01, 0.02];
+    const candidates = [
+      candidate("A", 20, base),
+      candidate("B", 18, base), // correlated with A
+      candidate("C", 15, base)  // also correlated with A and B
+    ];
+    // With a strict correlation cap, only A would normally qualify -- but there are only 3
+    // candidates total, so requesting 2 must backfill rather than returning just 1.
+    const picked = selectDiversified(candidates, 2, 0.5);
+    assert.equal(picked.length, 2);
   });
 });

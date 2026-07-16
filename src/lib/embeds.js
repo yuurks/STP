@@ -1,5 +1,6 @@
 const { EmbedBuilder, AttachmentBuilder } = require("discord.js");
 const path = require("path");
+const { computeDrawdown } = require("./portfolio");
 
 const LOGO_PATH = path.join(__dirname, "..", "..", "assets", "logo.png");
 
@@ -157,13 +158,15 @@ function portfolioEmbed(portfolio, currentPrices) {
   const totalReturnPct = ((totalValue - portfolio.startingCash) / portfolio.startingCash) * 100;
   const wins = portfolio.closedTrades.filter(t => t.pnl > 0).length;
   const losses = portfolio.closedTrades.filter(t => t.pnl <= 0).length;
+  const { maxDrawdownPct, currentDrawdownPct } = computeDrawdown(portfolio.equityCurve || []);
 
   embed.addFields({
     name: "Summary",
     value:
       `Cash: $${portfolio.cash.toFixed(2)} · Open positions value: $${marketValue.toFixed(2)}\n` +
       `Total value: $${totalValue.toFixed(2)} (${totalReturnPct >= 0 ? "+" : ""}${totalReturnPct.toFixed(2)}% since start)\n` +
-      `Closed trades: ${portfolio.closedTrades.length} (${wins}W / ${losses}L)`,
+      `Closed trades: ${portfolio.closedTrades.length} (${wins}W / ${losses}L)\n` +
+      `Max drawdown: -${maxDrawdownPct.toFixed(1)}% · Current drawdown: -${currentDrawdownPct.toFixed(1)}%`,
     inline: false
   });
 

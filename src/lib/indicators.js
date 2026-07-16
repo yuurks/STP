@@ -372,4 +372,69 @@ function backtest(rows, forwardDays = 5) {
   return { forwardDays, totalSignals: signals.length, summary, signals };
 }
 
-module.exports = { analyze, scoreAt, verdictFromScore, verdictSide, findUnfilledGap, backtest, atr, adx };
+function dailyReturns(closes) {
+  const out = [];
+  for (let i = 1; i < closes.length; i++) out.push((closes[i] - closes[i - 1]) / closes[i - 1]);
+  return out;
+}
+
+// Pearson correlation coefficient between two return series (uses the shorter length's worth
+// of the most recent entries from each, so tickers with different history lengths can still be
+// compared). Returns 0 -- "uncorrelated" -- rather than NaN/throwing on degenerate input, since
+// callers use this purely as a "how alike do these two move" filter, not a statistical claim.
+function correlation(a, b) {
+  const n = Math.min(a.length, b.length);
+  if (n < 2) return 0;
+  const xa = a.slice(-n), xb = b.slice(-n);
+  const meanA = xa.reduce((s, v) => s + v, 0) / n;
+  const meanB = xb.reduce((s, v) => s + v, 0) / n;
+  let cov = 0, varA = 0, varB = 0;
+  for (let i = 0; i < n; i++) {
+    const da = xa[i] - meanA, db = xb[i] - meanB;
+    cov += da * db; varA += da * da; varB += db * db;
+  }
+  if (varA === 0 || varB === 0) return 0;
+  return cov / Math.sqrt(varA * varB);
+}
+
+// Average price * volume over the trailing window -- a rough dollar-liquidity proxy. Not a
+// precise measure of true tradeable liquidity (spread, order book depth), just enough to screen
+// out names where a handful of trades can swing the price and produce misleadingly high
+// "volatility" that has nothing to do with a real trading opportunity.
+function avgDollarVolume(rows, days = 20) {
+  const recent = rows.slice(-days);
+  if (!recent.length) return 0;
+  const total = recent.reduce((sum, r) => sum + r.close * r.volume, 0);
+  return total / recent.length;
+}
+
+// Greedily picks the highest-volatility candidates, skipping any candidate whose return series
+// is too *positively* correlated with one already picked -- so "diversified" means actually-
+// uncorrelated movement, not just a stock/crypto label split. Deliberately only checks positive
+// correlation: two assets that move opposite each other are good diversification, not something
+// to avoid, so a strong negative correlation doesn't disqualify a candidate the way a strong
+// positive one does. Backfills from the remainder if the filter leaves fewer than `count` picks,
+// so this never returns fewer than requested (when enough candidates exist) purely because
+// everything happened to be correlated.
+function selectDiversified(candidates, count, maxCorrelation = 0.7) {
+  const sorted = [...candidates].sort((a, b) => b.volatility - a.volatility);
+  const selected = [];
+  for (const candidate of sorted) {
+    if (selected.length >= count) break;
+    const tooCorrelated = selected.some(s => correlation(s.returns, candidate.returns) > maxCorrelation);
+    if (!tooCorrelated) selected.push(candidate);
+  }
+  if (selected.length < count) {
+    const used = new Set(selected.map(c => c.symbol));
+    for (const candidate of sorted) {
+      if (selected.length >= count) break;
+      if (!used.has(candidate.symbol)) selected.push(candidate);
+    }
+  }
+  return selected;
+}
+
+module.exports = {
+  analyze, scoreAt, verdictFromScore, verdictSide, findUnfilledGap, backtest, atr, adx,
+  dailyReturns, correlation, avgDollarVolume, selectDiversified
+};

@@ -1,9 +1,14 @@
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
-const { createPortfolio, applyResults, MAX_POSITIONS } = require("../src/lib/portfolio");
+const {
+  createPortfolio, applyResults, computeDrawdown, positionSizeMultiplier, MAX_POSITIONS
+} = require("../src/lib/portfolio");
 
-function result(symbol, verdict, close, low, atr = 2) {
-  return { symbol, verdict, atr, last: { close, low: low != null ? low : close - 1 } };
+// score=4, volatility=2 are the "reference" values where positionSizeMultiplier is exactly
+// 1.0x, so every existing dollar-amount assertion below (e.g. "20% of cash") still holds exactly
+// unless a test deliberately overrides them to test sizing itself.
+function result(symbol, verdict, close, low, atr = 2, score = 4, volatility = 2) {
+  return { symbol, verdict, atr, score, volatility, last: { close, low: low != null ? low : close - 1 } };
 }
 
 describe("createPortfolio", () => {
@@ -132,5 +137,94 @@ describe("applyResults - exits", () => {
     assert.equal(Object.keys(afterClose.positions).length, 0);
     assert.ok(Math.abs(afterClose.cash - 10000) < 1e-9, `expected cash back to 10000, got ${afterClose.cash}`);
     assert.equal(afterClose.closedTrades[0].pnl, 0);
+  });
+});
+
+describe("positionSizeMultiplier", () => {
+  test("is exactly 1.0x at reference conviction and volatility", () => {
+    assert.ok(Math.abs(positionSizeMultiplier(4, 2) - 1.0) < 1e-9);
+  });
+
+  test("a higher-conviction score gets a bigger multiplier than a bare Buy", () => {
+    const strong = positionSizeMultiplier(8, 2);
+    const bare = positionSizeMultiplier(2, 2);
+    assert.ok(strong > bare, `expected strong-conviction (${strong}) > bare (${bare})`);
+  });
+
+  test("a more volatile ticker gets a smaller multiplier at the same conviction", () => {
+    const calm = positionSizeMultiplier(4, 1);
+    const wild = positionSizeMultiplier(4, 8);
+    assert.ok(calm > wild, `expected calm (${calm}) > wild (${wild})`);
+  });
+});
+
+describe("applyResults - sizing", () => {
+  test("a Strong Buy allocates more cash than a bare Buy at the same volatility", () => {
+    const p1 = createPortfolio(10000);
+    const { portfolio: afterBare } = applyResults(p1, [result("AAPL", "Buy", 100, 99, 2, 2, 2)]);
+    const bareAllocation = 10000 - afterBare.cash;
+
+    const p2 = createPortfolio(10000);
+    const { portfolio: afterStrong } = applyResults(p2, [result("MSFT", "Strong Buy", 100, 99, 2, 8, 2)]);
+    const strongAllocation = 10000 - afterStrong.cash;
+
+    assert.ok(strongAllocation > bareAllocation, `expected Strong Buy (${strongAllocation}) > Buy (${bareAllocation})`);
+  });
+
+  test("never allocates more than MAX_ALLOCATION_PCT of cash to one position, even at max multiplier", () => {
+    const p = createPortfolio(10000);
+    // score=8 (near-max conviction) + volatility=0.5 (near-max multiplier) -> should hit the cap
+    const { portfolio } = applyResults(p, [result("AAPL", "Strong Buy", 100, 99, 2, 8, 0.5)]);
+    const allocation = 10000 - portfolio.cash;
+    assert.ok(allocation <= 10000 * 0.40 + 1e-6, `expected allocation (${allocation}) capped at 40% of cash`);
+  });
+});
+
+describe("computeDrawdown", () => {
+  test("zero drawdown on a strictly rising curve", () => {
+    const curve = [{ timestamp: 1, value: 100 }, { timestamp: 2, value: 110 }, { timestamp: 3, value: 120 }];
+    const { maxDrawdownPct, currentDrawdownPct } = computeDrawdown(curve);
+    assert.equal(maxDrawdownPct, 0);
+    assert.equal(currentDrawdownPct, 0);
+  });
+
+  test("reports the correct max drawdown from a peak, even after partial recovery", () => {
+    const curve = [
+      { timestamp: 1, value: 100 },
+      { timestamp: 2, value: 200 }, // peak
+      { timestamp: 3, value: 100 }, // -50% from peak
+      { timestamp: 4, value: 150 }  // recovers partway -- current drawdown is -25%, not -50%
+    ];
+    const { maxDrawdownPct, currentDrawdownPct } = computeDrawdown(curve);
+    assert.ok(Math.abs(maxDrawdownPct - 50) < 1e-9, `expected max drawdown 50%, got ${maxDrawdownPct}`);
+    assert.ok(Math.abs(currentDrawdownPct - 25) < 1e-9, `expected current drawdown 25%, got ${currentDrawdownPct}`);
+  });
+
+  test("handles an empty curve without throwing", () => {
+    const { maxDrawdownPct, currentDrawdownPct, peakValue } = computeDrawdown([]);
+    assert.equal(maxDrawdownPct, 0);
+    assert.equal(currentDrawdownPct, 0);
+    assert.equal(peakValue, null);
+  });
+});
+
+describe("equity curve recording", () => {
+  test("starts with one snapshot at the starting cash", () => {
+    const p = createPortfolio(5000);
+    assert.equal(p.equityCurve.length, 1);
+    assert.equal(p.equityCurve[0].value, 5000);
+  });
+
+  test("records a new snapshot after the throttle interval has passed", () => {
+    const p = createPortfolio(10000);
+    const HOUR = 60 * 60 * 1000;
+    const { portfolio } = applyResults(p, [result("AAPL", "Neutral", 100, 99)], p.startedAt + HOUR + 1);
+    assert.equal(portfolio.equityCurve.length, 2);
+  });
+
+  test("does not record a second snapshot within the throttle interval", () => {
+    const p = createPortfolio(10000);
+    const { portfolio } = applyResults(p, [result("AAPL", "Neutral", 100, 99)], p.startedAt + 1000);
+    assert.equal(portfolio.equityCurve.length, 1);
   });
 });

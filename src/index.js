@@ -1,7 +1,9 @@
 require("dotenv").config();
 const { Client, GatewayIntentBits, Events } = require("discord.js");
 
-const { analyze, backtest } = require("./lib/indicators");
+const {
+  analyze, backtest, dailyReturns, avgDollarVolume, selectDiversified
+} = require("./lib/indicators");
 const { fetchDailySeries } = require("./lib/marketData");
 const watchlist = require("./lib/watchlist");
 const universe = require("./lib/universe");
@@ -83,11 +85,18 @@ function updatePortfolio(guildId, results) {
 // pacing this takes well over the 15-minute window Discord gives an interaction to respond, so
 // progress/results are posted as normal channel messages instead of interaction replies.
 const NO_TREND_ADX = 15;
+// Rough dollar-liquidity floor (price * volume, averaged over 20 days) -- screens out names
+// where a handful of trades can swing the price and produce misleadingly high "volatility" that
+// has nothing to do with a real trading opportunity.
+const MIN_DOLLAR_VOLUME = 1_000_000;
+// How similar (correlated) two picks' recent daily returns are allowed to be before the lower-
+// volatility one gets skipped in favor of something that actually moves independently.
+const MAX_CORRELATION = 0.7;
 // Always scans the max sustainable sample rather than asking the user to pick a size -- the
 // point is finding the biggest potential movers, which means checking as much of the candidate
 // pool as the free-tier request budget allows, not an arbitrary smaller default.
 const AUTOBUILD_SAMPLE_SIZE = 300;
-async function runAutobuild(guildId, channel, candidates, count, universeChoice) {
+async function runAutobuild(guildId, channel, candidates, count) {
   const found = [];
   for (const symbol of candidates) {
     try {
@@ -105,30 +114,17 @@ async function runAutobuild(guildId, channel, candidates, count, universeChoice)
   // Pure volatility with zero trend behind it is more often a spike about to mean-revert than
   // a real opportunity -- exclude confirmed no-trend candidates (benefit of the doubt if ADX
   // couldn't be computed at all rather than excluding on missing data).
-  const eligible = found.filter(f => f.adx == null || f.adx >= NO_TREND_ADX);
+  const trending = found.filter(f => f.adx == null || f.adx >= NO_TREND_ADX);
 
-  let top;
-  if (universeChoice === "both") {
-    // Crypto's baseline volatility runs structurally higher than stocks', so a single global
-    // ranking crowds out stocks almost every time -- rank each pool separately and blend the
-    // top of each instead, so the result is actually diversified rather than crypto-only.
-    const isCrypto = f => f.symbol.includes("/");
-    const cryptoRanked = eligible.filter(isCrypto).sort((a, b) => b.volatility - a.volatility);
-    const stockRanked = eligible.filter(f => !isCrypto(f)).sort((a, b) => b.volatility - a.volatility);
-    const half = Math.ceil(count / 2);
-    top = [...stockRanked.slice(0, half), ...cryptoRanked.slice(0, count - half)];
-    if (top.length < count) {
-      const used = new Set(top.map(t => t.symbol));
-      const backfill = eligible
-        .filter(f => !used.has(f.symbol))
-        .sort((a, b) => b.volatility - a.volatility)
-        .slice(0, count - top.length);
-      top = [...top, ...backfill];
-    }
-    top.sort((a, b) => b.volatility - a.volatility);
-  } else {
-    top = [...eligible].sort((a, b) => b.volatility - a.volatility).slice(0, count);
-  }
+  // Thin/illiquid names can look "volatile" purely because a few trades moved the price, not
+  // because there's a real opportunity -- filter those out before ranking.
+  const eligible = trending.filter(f => avgDollarVolume(f.rows) >= MIN_DOLLAR_VOLUME);
+
+  // Real correlation-based diversification, not a stock/crypto label split: rank by volatility,
+  // but skip any candidate whose recent daily returns move too closely with one already picked,
+  // so the result is actually-uncorrelated exposure rather than several near-identical bets.
+  const withReturns = eligible.map(f => ({ ...f, returns: dailyReturns(f.rows.slice(-61).map(r => r.close)) }));
+  const top = selectDiversified(withReturns, count, MAX_CORRELATION);
 
   if (!top.length) {
     await channel.send("Scan finished, but no candidates returned usable data — watchlist left unchanged.");
@@ -138,8 +134,9 @@ async function runAutobuild(guildId, channel, candidates, count, universeChoice)
   const tickers = watchlist.replaceTickers(guildId, top.map(t => t.symbol));
   await channel.send({
     content: `Scan complete: checked ${found.length}/${candidates.length} candidates ` +
-      `(${found.length - eligible.length} excluded for having no real trend). ` +
-      `Watchlist replaced with the ${tickers.length} biggest potential movers.`,
+      `(${found.length - trending.length} excluded for having no real trend, ` +
+      `${trending.length - eligible.length} for thin liquidity). ` +
+      `Watchlist replaced with the ${tickers.length} biggest potential movers, filtered for diversification.`,
     embeds: [volatilityEmbed(top)],
     files: [logoAttachment()]
   });
@@ -299,7 +296,7 @@ client.once(Events.ClientReady, c => {
         const channel = await client.channels.fetch(channelId);
         watchlist.markAutobuildRun(guildId, now); // mark before the long scan starts, not after
         await channel.send(`Scheduled scan starting: checking ${candidates.length} candidates from the ${universeChoice} pool for the biggest potential movers...`);
-        await runAutobuild(guildId, channel, candidates, count, universeChoice);
+        await runAutobuild(guildId, channel, candidates, count);
       } catch (err) {
         console.error(`Scheduled autobuild failed for guild ${guildId}: ${err.message}`);
       }
@@ -403,7 +400,7 @@ client.on(Events.InteractionCreate, async interaction => {
             `Scanning ${candidates.length} candidates from the ${universeChoice} pool for the biggest potential movers — ` +
             `this'll take about ${etaMin} min. I'll post here and replace the watchlist with the top ${count} when done.`
           );
-          runAutobuild(interaction.guildId, interaction.channel, candidates, count, universeChoice).catch(err => {
+          runAutobuild(interaction.guildId, interaction.channel, candidates, count).catch(err => {
             console.error(`Autobuild failed for guild ${interaction.guildId}: ${err.message}`);
             interaction.channel.send("Volatility scan failed partway through — check the bot logs.").catch(() => {});
           });

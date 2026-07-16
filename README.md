@@ -74,16 +74,21 @@ npm start
 npm test
 ```
 
-Uses Node's built-in test runner (`node --test`, no extra dependency). Covers the pure math in
-`src/lib/indicators.js` -- `findUnfilledGap`, `atr`, `adx`, `backtest` (including a real
-no-lookahead check, not just a hand-wave: it runs two otherwise-identical price series that only
-diverge after a cutoff day, and asserts every signal evaluated before that day produces an
-identical verdict regardless of what happens afterward), and `scoreAt`'s Golden/Death Cross
-detection -- and the paper-portfolio logic in
-`src/lib/portfolio.js` (position sizing, stop-hit vs. sell-signal exits, and a regression test
-for a real bug this suite caught: a stop-out and an unrelated same-pass Buy verdict on the same
-symbol could otherwise re-open the position it just closed). It doesn't cover the Discord-facing
-code in `index.js` -- that still needs to be exercised by hand in a real server.
+Uses Node's built-in test runner (`node --test`, no extra dependency), 51 tests across 16
+suites. Covers the pure math in `src/lib/indicators.js` -- `findUnfilledGap`, `atr`, `adx`,
+`backtest` (including a real no-lookahead check, not just a hand-wave: it runs two otherwise-
+identical price series that only diverge after a cutoff day, and asserts every signal evaluated
+before that day produces an identical verdict regardless of what happens afterward), `scoreAt`'s
+Golden/Death Cross detection, and the `correlation`/`selectDiversified`/`avgDollarVolume`
+functions behind autobuild's diversification (including a test that specifically locks in that
+strong *negative* correlation should never disqualify a candidate, after an early version of
+that same test caught the code initially treating positive and negative correlation the same
+way). Also covers the paper-portfolio logic in `src/lib/portfolio.js` (conviction/volatility-
+scaled position sizing, drawdown computation, equity-curve snapshot throttling, stop-hit vs.
+sell-signal exits, and a regression test for a real bug this suite caught: a stop-out and an
+unrelated same-pass Buy verdict on the same symbol could otherwise re-open the position it just
+closed). It doesn't cover the Discord-facing code in `index.js` -- that still needs to be
+exercised by hand in a real server.
 
 ## Commands
 
@@ -134,11 +139,17 @@ code in `index.js` -- that still needs to be exercised by hand in a real server.
   -- the standard deviation of daily % price changes over the fetched window -- a measure of how
   much a ticker moves, not a prediction of which direction it'll move next. Candidates with a
   confirmed weak/no trend (ADX < 15) are excluded, since pure volatility with nothing behind it
-  is as often a spike about to mean-revert as it is a real opportunity. When scanning
-  `universe:both`, stocks and crypto are ranked and picked separately rather than pooled into
-  one global ranking — crypto's baseline volatility runs structurally higher than stocks', so a
-  single ranking would crowd out stocks almost every time and leave you with a concentrated,
-  highly-correlated crypto-only watchlist instead of a genuinely diversified one.
+  is as often a spike about to mean-revert as it is a real opportunity. Thin/illiquid candidates
+  are also excluded (avg. dollar volume -- price × volume -- under $1M/day), since a handful of
+  trades moving a barely-traded ticker's price isn't the same thing as a real opportunity, even
+  if it shows up as "volatile." Final selection uses real correlation, not a stock/crypto label
+  split: candidates are ranked by volatility, but a candidate gets skipped if its recent daily
+  returns are too *positively* correlated (> 0.7) with something already picked -- strong negative
+  correlation is left alone, since two assets that move opposite each other are good
+  diversification, not something to avoid. This replaced an earlier version that just alternated
+  between the stock and crypto pools, which was a blunt proxy: two large-cap tech stocks can move
+  together just as much as two random cryptos, so a label split doesn't actually guarantee
+  uncorrelated exposure the way checking real correlation does.
 - **`/autobuild on` and manual `/watch autobuild` share one cooldown clock**: both write to the
   same "last run" timestamp, so triggering one pushes back when the other is next allowed to
   run. This is deliberate — it stops a scheduled and a manual run from ever overlapping and
@@ -196,10 +207,22 @@ code in `index.js` -- that still needs to be exercised by hand in a real server.
   sell signal even after its ticker gets removed (or replaced entirely by `/watch autobuild`) --
   otherwise it would just sit open forever, since no scan would ever look at that symbol again.
   `/portfolio start` refuses to run if a portfolio is already active, to avoid silently wiping
-  its history -- run `/portfolio reset` first if you actually want to restart. The 20%-per-
-  position / 8-position sizing is a simple, arbitrary rule, not a risk-optimized one -- it exists
-  so the simulation reflects the bot's actual signals, not so it reflects good position sizing
-  practice.
+  its history -- run `/portfolio reset` first if you actually want to restart.
+- **Position sizing scales with conviction and volatility, not a flat percentage**: a base 20%
+  of current cash is scaled up for higher-conviction signals (score magnitude, so a Strong Buy
+  gets more than a bare Buy) and scaled down for more volatile tickers (so a wild mover and a
+  calm one don't end up carrying the same dollar risk just because they got the same dollar
+  size) -- capped at 40% of cash per position either way, and 8 concurrent positions max. This
+  is still a simple, hand-picked formula, not a rigorously risk-optimized one -- it exists so the
+  simulation's position sizes track the bot's own stated confidence, not so it reflects
+  professional portfolio-construction practice.
+- **`/portfolio status` shows max drawdown, not just current return**: a portfolio snapshot gets
+  recorded (at most once/hour) every time the watchlist is scanned, building an equity curve that
+  `/portfolio status` reduces to max drawdown (the worst peak-to-trough decline ever recorded)
+  and current drawdown (how far below the all-time peak it sits right now). A steady climb to
+  +5% and a wild +30%-then--25%-then-+5% ride look identical if you only look at the current
+  return number -- drawdown is what actually tells those two apart, and it's the number that
+  matters most before ever considering real money.
 - **Persistence** is a flat JSON file (`data/watchlists.json`). Fine for one server or a few;
   swap in a real database if you're running this across many servers.
 - Nothing here is financial advice.
