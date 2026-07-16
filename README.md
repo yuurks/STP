@@ -23,6 +23,14 @@ It **posts signals only** — it never places real trades and isn't connected to
    - Whatever you pick, verify their current free-tier terms yourself — these details shift
      regularly and this README can go stale.
    It won't run inside Claude.ai; this is a standalone Node process either way.
+   - **Whatever host you use, attach persistent storage for `data/`.** Without it, every
+     redeploy wipes your watchlist, paper portfolio, and alert history back to empty — this
+     bit us once already. On Railway specifically: right-click the service box → **Attach
+     volume** → mount path `/app/data` → you must then click the **Deploy** button (or
+     Shift+Enter) to actually apply it, since Railway stages canvas changes rather than
+     applying them immediately. Confirm it worked by checking the deploy logs for the
+     `Watchlist data file: ...` line and cross-referencing it against Railway's own
+     `RAILWAY_VOLUME_MOUNT_PATH` env var, not just by trusting the dashboard UI.
 
 ## Setup
 
