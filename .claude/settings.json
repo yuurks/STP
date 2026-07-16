@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --test test/portfolio.test.js)",
+      "Bash(node --test test/indicators.test.js)",
+      "Bash(node --check src/lib/portfolio.js)",
+      "Bash(node --check src/lib/embeds.js)"
+    ]
+  }
+}
