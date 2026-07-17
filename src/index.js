@@ -641,7 +641,8 @@ client.on(Events.InteractionCreate, async interaction => {
           await interaction.reply("Shorts schedule turned off.");
         } else if (sub === "now") {
           const which = interaction.options.getString("which") || "both";
-          await interaction.reply(`Running a Shorts scan now (${which}) -- this'll take a few minutes, I'll post here when it's ready.`);
+          const etaMin = Math.ceil((SHORTS_SAMPLE_SIZE * PACING_MS) / 60000) * (which === "both" ? 2 : 1);
+          await interaction.reply(`Running a Shorts scan now (${which}) -- at ${SHORTS_SAMPLE_SIZE} candidates per side, that's about ${etaMin} min. I'll post here when it's ready.`);
           (async () => {
             try {
               if (which === "stocks" || which === "both") await runShortsDrop(interaction.channel, "stocks", "Stocks");
