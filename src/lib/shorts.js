@@ -6,6 +6,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const sharp = require("sharp");
 const { fetchDailySeries, fetchIntradaySeries } = require("./marketData");
 const { avgDollarVolume } = require("./indicators");
 const universe = require("./universe");
@@ -139,4 +140,119 @@ function generateShortHtml(winner, loser, universeKind = "stocks") {
     .split("{{META_LINE}}").join(formatMetaLine(winner.intraday.times));
 }
 
-module.exports = { findMover, generateShortHtml, intradayBarCount };
+// Same palette used in movers-short.template.html, validated for CVD-safety/contrast --
+// duplicated here (not imported) since the template's copy lives in CSS custom properties,
+// not a shape a Node module can require.
+const COLORS = {
+  surface: "#0b0f14",
+  card: "#131a22",
+  textPrimary: "#ffffff",
+  textSecondary: "#8b93a1",
+  textMuted: "#5b6472",
+  winner: "#0ca34a",
+  winnerFill: "rgba(12,163,74,0.18)",
+  loser: "#e0433d",
+  loserFill: "rgba(224,67,61,0.18)",
+  cta: "#5865f2"
+};
+
+function escapeXml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c]));
+}
+
+// Same line + area-fill math as the browser's renderChart() in the HTML template, just
+// computed server-side instead of against a live SVG element.
+function chartPaths(closes, x, y, w, h) {
+  const pad = 6;
+  const min = Math.min(...closes), max = Math.max(...closes);
+  const range = (max - min) || 1;
+  const stepX = (w - pad * 2) / (closes.length - 1);
+  const points = closes.map((v, i) => [
+    x + pad + i * stepX,
+    y + pad + (h - pad * 2) * (1 - (v - min) / range)
+  ]);
+  const line = points.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
+  const area = line + ` L${points[points.length - 1][0].toFixed(1)},${(y + h - pad).toFixed(1)} L${points[0][0].toFixed(1)},${(y + h - pad).toFixed(1)} Z`;
+  const last = points[points.length - 1];
+  return { line, area, lastX: last[0], lastY: last[1] };
+}
+
+function cardSvg({ x, y, w, h, accent, accentFill, tagLabel, ticker, pctChange, openPrice, nowPrice, closes, timeframe }) {
+  const pad = 40;
+  const chartH = 170;
+  const chartY = y + h - pad - chartH - 40;
+  const { line, area, lastX, lastY } = chartPaths(closes, x + pad, chartY, w - pad * 2, chartH);
+  const pctText = `${pctChange >= 0 ? "+" : ""}${pctChange.toFixed(1)}%`;
+
+  return `
+    <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="26" fill="${COLORS.card}" stroke="${accent}" stroke-opacity="0.45" stroke-width="2.5"/>
+    <rect x="${x + pad}" y="${y + 30}" width="150" height="44" rx="10" fill="${accentFill}"/>
+    <text x="${x + pad + 18}" y="${y + 60}" font-family="sans-serif" font-size="23" font-weight="800" letter-spacing="1.5" fill="${accent}">${escapeXml(tagLabel.toUpperCase())}</text>
+    <text x="${x + pad}" y="${y + 140}" font-family="monospace" font-size="52" font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(ticker)}</text>
+    <text x="${x + pad}" y="${y + 235}" font-family="sans-serif" font-size="92" font-weight="900" fill="${accent}">${pctText}</text>
+    <text x="${x + pad}" y="${y + 278}" font-family="sans-serif" font-size="29" fill="${COLORS.textSecondary}">Open <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(openPrice)}</tspan> → Now <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(nowPrice)}</tspan></text>
+    <path d="${area}" fill="${accentFill}"/>
+    <path d="${line}" fill="none" stroke="${accent}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="9" fill="${accent}"/>
+    <text x="${x + pad}" y="${y + h - 24}" font-family="sans-serif" font-size="23" font-weight="700" letter-spacing="1" fill="${COLORS.textMuted}">${escapeXml(timeframe.toUpperCase())}</text>
+  `;
+}
+
+// Renders the same content as generateShortHtml(), but as a flat 1080x1920 PNG (standard
+// Shorts/Reels resolution) instead of an interactive page -- for posting directly into Discord
+// as an image rather than a file you have to download and open. No count-up/draw-in animation
+// (nothing to animate in a still image); every value is shown at its final resting state.
+async function generateShortImage(winner, loser, universeKind = "stocks") {
+  if (!winner?.intraday?.closes?.length || !loser?.intraday?.closes?.length) {
+    throw new Error("winner/loser is missing intraday data -- run findMover() first");
+  }
+
+  const W = 1080, H = 1920;
+  const logoSrc = `data:image/png;base64,${fs.readFileSync(LOGO_PATH).toString("base64")}`;
+  const sessionLabel = formatSessionLabel(winner.intraday.times, universeKind);
+  const metaLine = formatMetaLine(winner.intraday.times);
+
+  const cardX = 70, cardW = W - 140, cardH = 560, cardGap = 30;
+  const winnerY = 380;
+  const loserY = winnerY + cardH + cardGap;
+
+  const svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${W}" height="${H}" fill="${COLORS.surface}"/>
+  <rect x="8" y="8" width="${W - 16}" height="${H - 16}" rx="36" fill="none" stroke="${COLORS.winner}" stroke-width="6" stroke-opacity="0.55"/>
+
+  <clipPath id="logoClip"><rect x="70" y="80" width="64" height="64" rx="16"/></clipPath>
+  <image href="${logoSrc}" x="70" y="80" width="64" height="64" clip-path="url(#logoClip)"/>
+  <text x="150" y="122" font-family="sans-serif" font-size="29" font-weight="700" letter-spacing="2" fill="${COLORS.textSecondary}">STP · TODAY'S MOVERS</text>
+
+  <text x="70" y="212" font-family="sans-serif" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">Today's biggest</text>
+  <text x="70" y="280" font-family="sans-serif" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">winner &amp; loser.</text>
+
+  <circle cx="80" cy="325" r="9" fill="${COLORS.cta}"/>
+  <text x="100" y="334" font-family="sans-serif" font-size="29" font-weight="600" fill="${COLORS.textSecondary}">Live off today's session</text>
+
+  ${cardSvg({
+    x: cardX, y: winnerY, w: cardW, h: cardH, accent: COLORS.winner, accentFill: COLORS.winnerFill,
+    tagLabel: "Winner", ticker: winner.symbol, pctChange: winner.pctChange,
+    openPrice: formatMoney(winner.intraday.closes[0]), nowPrice: formatMoney(winner.price),
+    closes: winner.intraday.closes, timeframe: sessionLabel
+  })}
+
+  ${cardSvg({
+    x: cardX, y: loserY, w: cardW, h: cardH, accent: COLORS.loser, accentFill: COLORS.loserFill,
+    tagLabel: "Loser", ticker: loser.symbol, pctChange: loser.pctChange,
+    openPrice: formatMoney(loser.intraday.closes[0]), nowPrice: formatMoney(loser.price),
+    closes: loser.intraday.closes, timeframe: sessionLabel
+  })}
+
+  <rect x="${W / 2 - 230}" y="1610" width="460" height="90" rx="45" fill="${COLORS.cta}"/>
+  <text x="${W / 2}" y="1666" font-family="sans-serif" font-size="35" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
+
+  <text x="${W / 2}" y="1760" font-family="sans-serif" font-size="25" font-weight="700" fill="${COLORS.textSecondary}" text-anchor="middle">${escapeXml(metaLine)}</text>
+  <text x="${W / 2}" y="1805" font-family="sans-serif" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Technical pattern data, not financial advice.</text>
+  <text x="${W / 2}" y="1835" font-family="sans-serif" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
+</svg>`;
+
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
+
+module.exports = { findMover, generateShortHtml, generateShortImage, intradayBarCount };

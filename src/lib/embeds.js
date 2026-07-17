@@ -190,12 +190,12 @@ function formatDollarVolume(v) {
   return `$${(v / 1_000_000).toFixed(1)}M`;
 }
 
-function shortsEmbed(winner, loser, label) {
+function shortsEmbed(winner, loser, label, imageFilename) {
   const embed = new EmbedBuilder()
     .setTitle(`🎬 Today's Biggest Movers — ${label}`)
     .setColor(0x0ca34a)
-    .setThumbnail("attachment://logo.png")
-    .setFooter({ text: "Technical pattern data, not financial advice. Attached file is the ready-to-record Short -- open it locally in a browser." })
+    .setImage(`attachment://${imageFilename}`)
+    .setFooter({ text: "Technical pattern data, not financial advice. Save the image above for your Short." })
     .setTimestamp();
 
   embed.addFields(

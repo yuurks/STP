@@ -121,7 +121,7 @@ exercised by hand in a real server.
 | `/portfolio start starting_cash:10000` | Start a simulated paper-trading portfolio (no real money) that follows this bot's own Buy/Sell signals |
 | `/portfolio status` | Show current cash, open positions with live unrealized P&L, total return, and recent closed trades |
 | `/portfolio reset` | Wipe the paper portfolio and start over |
-| `/shorts on stocks_channel:#... crypto_channel:#...` | Turn on the daily YouTube Shorts content drop — scans for today's biggest winner/loser and posts a ready-to-record HTML file: stocks at 4:00pm ET, crypto at 8:00pm ET |
+| `/shorts on stocks_channel:#... crypto_channel:#...` | Turn on the daily YouTube Shorts content drop — scans for today's biggest winner/loser and posts a ready-to-use image: stocks at 4:00pm ET, crypto at 8:00pm ET |
 | `/shorts off` | Turn off the daily Shorts drop |
 | `/shorts now which:both` | Run a Shorts scan immediately instead of waiting for the schedule |
 
@@ -201,17 +201,22 @@ exercised by hand in a real server.
   at the stop price rather than the latest close if so (shown as "Stopped out: X/N" per verdict
   type). `/alerts history` can only do this for alerts fired after ATR started being logged
   alongside them — older log entries fall back to a plain latest-price-vs-fired-price comparison.
-- **`/shorts` can't fully automate posting to YouTube**: the bot can't render its own animated
-  HTML into a video or upload anywhere -- doing that would mean either a headless-browser
-  dependency (puppeteer, ~300MB) or a new web server + public Railway domain, both bigger
-  commitments than this feature warrants. Instead, at the scheduled time the bot scans a sample
-  of `stocks.txt` (4pm ET) or `crypto.txt` (8pm ET) for the day's single biggest gainer/loser and
-  posts a stats embed plus the finished, self-contained HTML file as a Discord attachment --
-  download it, open it locally, and screen-record the first couple seconds (the % figures count
-  up and the chart draws itself in) to get your actual video clip. Uploading to YouTube stays a
-  manual, human step. Each scheduled run samples 100 candidates (not the full 300 `/watch
-  autobuild` uses) specifically to keep two automatic runs a day from eating too much of the
-  shared 800/day request quota.
+- **`/shorts` can't fully automate posting to YouTube**: at the scheduled time the bot scans a
+  liquidity-filtered sample of `stocks.txt` (4pm ET) or `crypto.txt` (8pm ET) for the day's
+  single biggest gainer/loser (excluding thin-volume names -- see below), renders the result as a
+  1080x1920 PNG (built as SVG server-side and rasterized with `sharp`, not a headless browser --
+  puppeteer was ruled out early on as too heavy, ~300MB, for what this needs), and posts it
+  directly as a Discord image. Turning that into an actual uploaded YouTube Short and posting it
+  still needs a human -- the bot won't ever render/mux video or touch YouTube's API on its own.
+  Each scheduled run samples 100 candidates (not the full 300 `/watch autobuild` uses)
+  specifically to keep two automatic runs a day from eating too much of the shared 800/day
+  request quota. A separate manual pipeline (`scripts/find-movers.js` + `scripts/generate-short.js`)
+  still produces an animated, interactive HTML version of the same visual (count-up numbers,
+  self-drawing chart) for when you want something to screen-record instead of a static image.
+- **`/shorts` only picks volume-backed movers**: same $1M/day avg. dollar-volume floor as
+  `/watch autobuild` -- a huge % move on a handful of trades gets excluded rather than shown as
+  the "biggest mover," since that's noise, not a real move. Falls back to the best mover
+  regardless of volume only if literally nothing in that run's sample clears the floor.
 - **No real order execution**: `/portfolio` simulates trading (see below), but it is not
   connected to any brokerage and never risks real money. Turning this into real automated
   trades would require a brokerage API (e.g. Alpaca, Interactive Brokers), real capital at risk

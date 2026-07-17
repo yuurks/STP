@@ -238,17 +238,19 @@ function nowInEastern() {
   return { date: `${get("year")}-${get("month")}-${get("day")}`, hhmm: `${get("hour")}:${get("minute")}` };
 }
 
-// Scans, generates the finished HTML, and posts both the stats embed and the ready-to-record
-// file to the given channel. `label` is just for the embed title ("Stocks" / "Crypto").
+// Scans, renders the finished visual as a PNG, and posts it to the given channel as an
+// embedded image (not a file you have to download and open) alongside the stats embed.
+// `label` is just for the embed title ("Stocks" / "Crypto").
 async function runShortsDrop(channel, universeKind, label) {
   const { winner, loser } = await shorts.findMover(universeKind, SHORTS_SAMPLE_SIZE);
   if (!winner || !loser) {
     await channel.send(`Shorts scan (${label}) finished, but didn't find usable data -- skipped.`);
     return;
   }
-  const html = shorts.generateShortHtml(winner, loser, universeKind);
-  const file = new AttachmentBuilder(Buffer.from(html, "utf8"), { name: `stp-short-${universeKind}.html` });
-  await channel.send({ embeds: [shortsEmbed(winner, loser, label)], files: [file] });
+  const png = await shorts.generateShortImage(winner, loser, universeKind);
+  const filename = `stp-short-${universeKind}.png`;
+  const file = new AttachmentBuilder(png, { name: filename });
+  await channel.send({ embeds: [shortsEmbed(winner, loser, label, filename)], files: [file] });
 }
 
 // Fires only for tickers whose verdict is actionable (not Neutral) and has changed since the
