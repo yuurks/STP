@@ -633,8 +633,8 @@ client.on(Events.InteractionCreate, async interaction => {
           });
           await interaction.reply(
             `Shorts on: stock winner/loser drops daily at 4:00pm ET in ${stocksChannel}, ` +
-            `crypto at 8:00pm ET in ${cryptoChannel}. Each post includes a ready-to-open HTML file ` +
-            "you can screen-record for a Short -- posting to YouTube is still on you."
+            `crypto at 8:00pm ET in ${cryptoChannel}. Each post includes a ready-to-use image ` +
+            "-- save it and post it as a Short, or use it as-is. Posting to YouTube is still on you."
           );
         } else if (sub === "off") {
           watchlist.setShortsSchedule(interaction.guildId, null);
