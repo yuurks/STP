@@ -213,10 +213,13 @@ exercised by hand in a real server.
   request quota. A separate manual pipeline (`scripts/find-movers.js` + `scripts/generate-short.js`)
   still produces an animated, interactive HTML version of the same visual (count-up numbers,
   self-drawing chart) for when you want something to screen-record instead of a static image.
-- **`/shorts` only picks volume-backed movers**: same $1M/day avg. dollar-volume floor as
-  `/watch autobuild` -- a huge % move on a handful of trades gets excluded rather than shown as
-  the "biggest mover," since that's noise, not a real move. Falls back to the best mover
-  regardless of volume only if literally nothing in that run's sample clears the floor.
+- **`/shorts` only picks volume-backed movers**: $500K/day avg. dollar-volume floor (lower than
+  `/watch autobuild`'s $1M -- Shorts only needs one real mover per run, not a diversified
+  watchlist, so a slightly smaller liquidity bar still screens out thin/illiquid noise without
+  excluding too much of the candidate pool). A huge % move on a handful of trades gets excluded
+  rather than shown as the "biggest mover," since that's noise, not a real move. Falls back to
+  the best mover regardless of volume only if literally nothing in that run's sample clears the
+  floor.
 - **No real order execution**: `/portfolio` simulates trading (see below), but it is not
   connected to any brokerage and never risks real money. Turning this into real automated
   trades would require a brokerage API (e.g. Alpaca, Interactive Brokers), real capital at risk

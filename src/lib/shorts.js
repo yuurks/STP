@@ -14,11 +14,13 @@ const universe = require("./universe");
 const PACING_MS = 7500; // same as the bot -- stays under Twelve Data's free 8 req/min
 const sleep = ms => new Promise(res => setTimeout(res, ms));
 
-// Same liquidity floor /watch autobuild uses -- a huge % move on a handful of trades isn't a
-// real "biggest mover," just noise. Below this, a ticker is excluded from winner/loser
+// Lower than /watch autobuild's $1M floor -- Shorts only needs one real mover per run, not a
+// diversified watchlist, so a smaller liquidity bar still screens out thin/illiquid noise
+// without excluding too much of the candidate pool. A huge % move on a handful of trades isn't
+// a real "biggest mover," just noise. Below this, a ticker is excluded from winner/loser
 // consideration entirely rather than merely deprioritized, so the result is never a thin-volume
 // fluke with an eye-catching number attached.
-const MIN_DOLLAR_VOLUME = 1_000_000;
+const MIN_DOLLAR_VOLUME = 500_000;
 
 // Crypto trades round the clock, so "intraday" there means a trailing 24h window (96 x 15min
 // bars) rather than a bounded session -- stocks use a single ~6.5hr NYSE session (26 bars).
