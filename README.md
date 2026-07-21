@@ -102,11 +102,11 @@ exercised by hand in a real server.
 
 | Command | What it does |
 |---|---|
-| `/watch add ticker:AAPL` | Add tickers to this server's watchlist. Accepts crypto pairs like `BTC/USD` or `BTC-USD`, and multiple at once, comma or space separated (up to 50) |
-| `/watch remove ticker:AAPL` | Remove one |
+| `/watch add ticker:BTC/USD` | Add tickers to this server's watchlist (crypto pairs like `BTC/USD` or `BTC-USD`; also accepts plain stock tickers if you ever want one, just not what the bot's built around anymore), multiple at once, comma or space separated (up to 50) |
+| `/watch remove ticker:BTC/USD` | Remove one |
 | `/watch list` | Show the current watchlist |
 | `/watch clear` | Remove every ticker from the watchlist |
-| `/watch autobuild universe:both count:15` | **One-off**: scan 300 candidates from `stocks.txt`/`crypto.txt` for the biggest potential movers, and **replace** the watchlist with the top `count`. Runs in the background and posts results when done |
+| `/watch autobuild count:15` | **One-off**: scan the crypto candidate pool for the biggest potential movers, and **replace** the watchlist with the top `count`. Runs in the background and posts results when done |
 | `/autobuild on channel:#signals interval_hours:24 ...` | **Recurring** version of the above — automatically reruns `/watch autobuild` on a schedule (min 24h) and posts to a channel, instead of you triggering it manually each time |
 | `/autobuild off` | Turn off scheduled autobuild |
 | `/scan` | Run the scanner on the watchlist right now, posts a ranked embed |
@@ -127,10 +127,12 @@ exercised by hand in a real server.
 
 ## Notes and honest limitations
 
-- **Crypto support**: add pairs like `BTC/USD` or `BTC-USD` alongside regular stock tickers —
-  same Twelve Data endpoint, same free-tier quota, no separate setup. Crypto trades 24/7 so its
-  daily candles won't have the weekend gaps stocks do, but the same SMA/EMA/RSI/MACD/Bollinger
-  math applies either way.
+- **This bot is crypto-focused**: `/watch autobuild`, `/autobuild`, and `/shorts` all draw from
+  `crypto.txt` only -- there's no stock candidate pool anymore. `/watch add` will still take a
+  plain stock ticker if you ever type one in manually (the underlying scan math doesn't care what
+  asset class it's fed), it's just not what anything is built around. Crypto trades 24/7 so its
+  daily candles won't have the weekend gaps a stock would, but the same SMA/EMA/RSI/MACD/Bollinger
+  math applies regardless.
 - **Rate limits**: the free Twelve Data tier allows 8 requests/minute and 800/day. The bot paces
   requests at 7.5s apart to respect the per-minute cap. `/autoscan on` and `/alerts on` both
   reject an `interval_minutes` that would exceed the daily cap for your current watchlist size
@@ -142,9 +144,10 @@ exercised by hand in a real server.
   candles, meaningful changes typically happen at most once a day regardless of how often you
   set it to check.
 - **`/watch autobuild` is expensive and destructive**: there's no user-facing "sample size" to
-  tune — it always scans 300 candidates (one API request each, no way around that on the free
-  tier) to actually find the biggest potential movers rather than a smaller, less representative
-  slice, which takes nearly 40 minutes. It *replaces* the entire watchlist rather than merging
+  tune — it always scans up to 300 candidates from the crypto pool (one API request each, no way
+  around that on the free tier; `crypto.txt` currently has ~243, so in practice that's the whole
+  pool) to actually find the biggest potential movers rather than a smaller, less representative
+  slice, which takes up to ~30 minutes. It *replaces* the entire watchlist rather than merging
   into it. The 24h-per-server cooldown exists because a single run eats a large chunk of the
   daily request quota by itself. "Biggest potential movers" here means highest recent volatility
   -- the standard deviation of daily % price changes over the fetched window -- a measure of how
@@ -153,14 +156,11 @@ exercised by hand in a real server.
   is as often a spike about to mean-revert as it is a real opportunity. Thin/illiquid candidates
   are also excluded (avg. dollar volume -- price × volume -- under $1M/day), since a handful of
   trades moving a barely-traded ticker's price isn't the same thing as a real opportunity, even
-  if it shows up as "volatile." Final selection uses real correlation, not a stock/crypto label
-  split: candidates are ranked by volatility, but a candidate gets skipped if its recent daily
-  returns are too *positively* correlated (> 0.7) with something already picked -- strong negative
+  if it shows up as "volatile." Final selection uses real correlation-based diversification:
+  candidates are ranked by volatility, but a candidate gets skipped if its recent daily returns
+  are too *positively* correlated (> 0.7) with something already picked -- strong negative
   correlation is left alone, since two assets that move opposite each other are good
-  diversification, not something to avoid. This replaced an earlier version that just alternated
-  between the stock and crypto pools, which was a blunt proxy: two large-cap tech stocks can move
-  together just as much as two random cryptos, so a label split doesn't actually guarantee
-  uncorrelated exposure the way checking real correlation does.
+  diversification, not something to avoid.
 - **`/autobuild on` and manual `/watch autobuild` share one cooldown clock**: both write to the
   same "last run" timestamp, so triggering one pushes back when the other is next allowed to
   run. This is deliberate — it stops a scheduled and a manual run from ever overlapping and

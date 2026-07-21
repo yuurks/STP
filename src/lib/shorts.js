@@ -26,11 +26,8 @@ const MIN_VOLUME_SURGE = 1.3;
 // /watch autobuild's $1M, since small/mid caps are expected to be thin in absolute terms.
 const MIN_BASELINE_DOLLAR_VOLUME = 10_000;
 
-// Crypto trades round the clock, so "intraday" there means a trailing 24h window (96 x 15min
-// bars) rather than a bounded session -- stocks use a single ~6.5hr NYSE session (26 bars).
-function intradayBarCount(universeKind) {
-  return universeKind.startsWith("crypto") ? 96 : 26;
-}
+// Crypto trades round the clock, so "intraday" means a trailing 24h window: 96 bars at 15min each.
+const INTRADAY_BAR_COUNT = 96;
 
 // Scans a random sample of the given universe (see universe.js for the "kind" options) for the
 // day's single biggest gainer and loser among candidates showing a real volume surge vs. their
@@ -82,7 +79,7 @@ async function findMover(universeKind, sampleSize) {
     if (!entry) continue;
     await sleep(PACING_MS);
     try {
-      const bars = await fetchIntradaySeries(entry.symbol, "15min", intradayBarCount(universeKind));
+      const bars = await fetchIntradaySeries(entry.symbol, "15min", INTRADAY_BAR_COUNT);
       entry.intraday = { times: bars.map(b => b.time), closes: bars.map(b => b.close) };
     } catch (err) {
       console.error(`Shorts intraday fetch failed for ${entry.symbol}: ${err.message}`);
@@ -100,21 +97,15 @@ function parseBarTime(t) {
   return new Date(t.replace(" ", "T"));
 }
 
-// Stocks get a bounded NYSE session label; crypto's intraday window is a trailing 24h instead
-// of a "session" (there isn't one), so it reads differently even though both are driven by the
-// same first/last bar timestamps.
-function formatSessionLabel(times, universeKind) {
+// Crypto's intraday window is a trailing 24h, not a bounded session -- and since 96 x 15min bars
+// lands back on the exact same clock time a day later, the date has to be shown too ("10:15 PM
+// -10:15 PM" alone would read as zero elapsed time).
+function formatSessionLabel(times) {
   const fmtTime = d => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  const fmtDate = d => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   const start = parseBarTime(times[0]);
   const end = parseBarTime(times[times.length - 1]);
-
-  if (universeKind.startsWith("crypto")) {
-    // A ~24h window sampled at 15min bars lands back on the same clock time a day later --
-    // "10:15 PM-10:15 PM" reads as zero elapsed time without a date to disambiguate.
-    const fmtDate = d => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-    return `Last 24 hours · ${fmtDate(start)} ${fmtTime(start)} – ${fmtDate(end)} ${fmtTime(end)} ET`;
-  }
-  return `Today's session · ${fmtTime(start)}–${fmtTime(end)} ET`;
+  return `Last 24 hours · ${fmtDate(start)} ${fmtTime(start)} – ${fmtDate(end)} ${fmtTime(end)} ET`;
 }
 
 function formatMetaLine(times) {
@@ -131,7 +122,7 @@ const LOGO_PATH = path.join(__dirname, "..", "..", "assets", "logo.png");
 // .symbol/.pctChange/.price/.intraday.{times,closes} -- exactly what findMover() returns) and
 // returns the finished, self-contained HTML as a string, ready to write to disk or attach to a
 // Discord message.
-function generateShortHtml(winner, loser, universeKind = "stocks") {
+function generateShortHtml(winner, loser) {
   if (!winner?.intraday?.closes?.length || !loser?.intraday?.closes?.length) {
     throw new Error("winner/loser is missing intraday data -- run findMover() first");
   }
@@ -152,7 +143,7 @@ function generateShortHtml(winner, loser, universeKind = "stocks") {
     .split("{{LOSER_OPEN}}").join(formatMoney(loser.intraday.closes[0]))
     .split("{{LOSER_PRICE}}").join(formatMoney(loser.price))
     .split("{{LOSER_CLOSES}}").join(JSON.stringify(round2(loser.intraday.closes)))
-    .split("{{SESSION_LABEL}}").join(formatSessionLabel(winner.intraday.times, universeKind))
+    .split("{{SESSION_LABEL}}").join(formatSessionLabel(winner.intraday.times))
     .split("{{META_LINE}}").join(formatMetaLine(winner.intraday.times));
 }
 
@@ -224,14 +215,14 @@ function cardSvg({ x, y, w, h, accent, accentFill, tagLabel, ticker, pctChange, 
 // Shorts/Reels resolution) instead of an interactive page -- for posting directly into Discord
 // as an image rather than a file you have to download and open. No count-up/draw-in animation
 // (nothing to animate in a still image); every value is shown at its final resting state.
-async function generateShortImage(winner, loser, universeKind = "stocks") {
+async function generateShortImage(winner, loser) {
   if (!winner?.intraday?.closes?.length || !loser?.intraday?.closes?.length) {
     throw new Error("winner/loser is missing intraday data -- run findMover() first");
   }
 
   const W = 1080, H = 1920;
   const logoSrc = `data:image/png;base64,${fs.readFileSync(LOGO_PATH).toString("base64")}`;
-  const sessionLabel = formatSessionLabel(winner.intraday.times, universeKind);
+  const sessionLabel = formatSessionLabel(winner.intraday.times);
   const metaLine = formatMetaLine(winner.intraday.times);
 
   const cardX = 70, cardW = W - 140, cardH = 560, cardGap = 30;
@@ -277,4 +268,4 @@ async function generateShortImage(winner, loser, universeKind = "stocks") {
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
-module.exports = { findMover, generateShortHtml, generateShortImage, intradayBarCount };
+module.exports = { findMover, generateShortHtml, generateShortImage };

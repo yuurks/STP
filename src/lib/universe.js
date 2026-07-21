@@ -1,10 +1,9 @@
-// Loads the candidate ticker pools shipped at the repo root (stocks.txt / crypto.txt) for
-// /watch autobuild to sample from. These are just reference lists, not the active watchlist.
+// Loads the candidate ticker pool shipped at the repo root (crypto.txt) for /watch autobuild
+// and /shorts to sample from. Just a reference list, not the active watchlist.
 
 const fs = require("fs");
 const path = require("path");
 
-const STOCKS_FILE = path.join(__dirname, "..", "..", "stocks.txt");
 const CRYPTO_FILE = path.join(__dirname, "..", "..", "crypto.txt");
 
 function loadLines(file) {
@@ -21,12 +20,10 @@ function loadLines(file) {
 // the file's ranking is a point-in-time compile, not a live feed.
 const SMALLCAP_RANK_CUTOFF = 50;
 
-// kind: "stocks" | "crypto" | "crypto-smallcap" | "both"
+// kind: "crypto" | "crypto-smallcap"
 function loadUniverse(kind) {
-  if (kind === "stocks") return loadLines(STOCKS_FILE);
-  if (kind === "crypto") return loadLines(CRYPTO_FILE);
   if (kind === "crypto-smallcap") return loadLines(CRYPTO_FILE).slice(SMALLCAP_RANK_CUTOFF);
-  return [...loadLines(STOCKS_FILE), ...loadLines(CRYPTO_FILE)];
+  return loadLines(CRYPTO_FILE);
 }
 
 function sample(list, count) {

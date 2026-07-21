@@ -243,17 +243,16 @@ function nowInEastern() {
 
 // Scans, renders the finished visual as a PNG, and posts it to the given channel as an
 // embedded image (not a file you have to download and open) alongside the stats embed.
-// `label` is just for the embed title ("Stocks" / "Crypto").
-async function runShortsDrop(channel, universeKind, label) {
-  const { winner, loser } = await shorts.findMover(universeKind, SHORTS_SAMPLE_SIZE);
+async function runShortsDrop(channel) {
+  const { winner, loser } = await shorts.findMover(SHORTS_UNIVERSE, SHORTS_SAMPLE_SIZE);
   if (!winner || !loser) {
-    await channel.send(`Shorts scan (${label}) finished, but didn't find usable data -- skipped.`);
+    await channel.send("Shorts scan finished, but didn't find usable data -- skipped.");
     return;
   }
-  const png = await shorts.generateShortImage(winner, loser, universeKind);
-  const filename = `stp-short-${universeKind}.png`;
+  const png = await shorts.generateShortImage(winner, loser);
+  const filename = "stp-short.png";
   const file = new AttachmentBuilder(png, { name: filename });
-  await channel.send({ embeds: [shortsEmbed(winner, loser, label, filename)], files: [file] });
+  await channel.send({ embeds: [shortsEmbed(winner, loser, "Crypto", filename)], files: [file] });
 }
 
 // Fires only for tickers whose verdict is actionable (not Neutral) and has changed since the
@@ -317,7 +316,7 @@ client.once(Events.ClientReady, c => {
     }
 
     for (const [guildId, guildData] of watchlist.allGuildsWithAutobuildSchedule()) {
-      const { channelId, intervalHours, universe: universeChoice, count } = guildData.autobuildSchedule;
+      const { channelId, intervalHours, count } = guildData.autobuildSchedule;
       // Shares the same cooldown clock as manual /watch autobuild, so a scheduled and a manual
       // run can never overlap/double-spend the daily request quota.
       const lastRun = watchlist.getAutobuildLastRun(guildId);
@@ -325,12 +324,12 @@ client.once(Events.ClientReady, c => {
       if (!due) continue;
 
       try {
-        const pool = universe.loadUniverse(universeChoice);
+        const pool = universe.loadUniverse("crypto");
         if (!pool.length) continue;
         const candidates = universe.sample(pool, AUTOBUILD_SAMPLE_SIZE);
         const channel = await client.channels.fetch(channelId);
         watchlist.markAutobuildRun(guildId, now); // mark before the long scan starts, not after
-        await channel.send(`Scheduled scan starting: checking ${candidates.length} candidates from the ${universeChoice} pool for the biggest potential movers...`);
+        await channel.send(`Scheduled scan starting: checking ${candidates.length} crypto candidates for the biggest potential movers...`);
         await runAutobuild(guildId, channel, candidates, count);
       } catch (err) {
         console.error(`Scheduled autobuild failed for guild ${guildId}: ${err.message}`);
@@ -365,7 +364,7 @@ client.once(Events.ClientReady, c => {
         watchlist.markShortRun(guildId, "1", date);
         try {
           const channel = await client.channels.fetch(channelId);
-          await runShortsDrop(channel, SHORTS_UNIVERSE, "Crypto");
+          await runShortsDrop(channel);
         } catch (err) {
           console.error(`Shorts drop (4pm) failed for guild ${guildId}: ${err.message}`);
         }
@@ -375,7 +374,7 @@ client.once(Events.ClientReady, c => {
         watchlist.markShortRun(guildId, "2", date);
         try {
           const channel = await client.channels.fetch(channelId);
-          await runShortsDrop(channel, SHORTS_UNIVERSE, "Crypto");
+          await runShortsDrop(channel);
         } catch (err) {
           console.error(`Shorts drop (8pm) failed for guild ${guildId}: ${err.message}`);
         }
@@ -447,12 +446,11 @@ client.on(Events.InteractionCreate, async interaction => {
             break;
           }
 
-          const universeChoice = interaction.options.getString("universe") || "both";
           const count = Math.min(50, Math.max(1, interaction.options.getInteger("count") || 15));
 
-          const pool = universe.loadUniverse(universeChoice);
+          const pool = universe.loadUniverse("crypto");
           if (!pool.length) {
-            await interaction.reply({ content: "Candidate pool is empty — stocks.txt/crypto.txt may be missing.", ephemeral: true });
+            await interaction.reply({ content: "Candidate pool is empty — crypto.txt may be missing.", ephemeral: true });
             break;
           }
           const candidates = universe.sample(pool, AUTOBUILD_SAMPLE_SIZE);
@@ -460,7 +458,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
           watchlist.markAutobuildRun(interaction.guildId, Date.now());
           await interaction.reply(
-            `Scanning ${candidates.length} candidates from the ${universeChoice} pool for the biggest potential movers — ` +
+            `Scanning ${candidates.length} crypto candidates for the biggest potential movers — ` +
             `this'll take about ${etaMin} min. I'll post here and replace the watchlist with the top ${count} when done.`
           );
           runAutobuild(interaction.guildId, interaction.channel, candidates, count).catch(err => {
@@ -608,13 +606,12 @@ client.on(Events.InteractionCreate, async interaction => {
         if (sub === "on") {
           const channel = interaction.options.getChannel("channel");
           const intervalHours = Math.max(24, interaction.options.getInteger("interval_hours") || 24);
-          const universeChoice = interaction.options.getString("universe") || "both";
           const count = Math.min(50, Math.max(1, interaction.options.getInteger("count") || 15));
           watchlist.setAutobuildSchedule(interaction.guildId, {
-            channelId: channel.id, intervalHours, universe: universeChoice, count
+            channelId: channel.id, intervalHours, count
           });
           await interaction.reply(
-            `Scheduled autobuild on: every ${intervalHours}h, scanning the ${universeChoice} pool for the biggest potential movers, ` +
+            `Scheduled autobuild on: every ${intervalHours}h, scanning the crypto pool for the biggest potential movers, ` +
             `keeping the top ${count}, posting to ${channel}. Shares its cooldown with manual \`/watch autobuild\`, ` +
             "so running that separately will push back the next scheduled run."
           );
@@ -643,7 +640,7 @@ client.on(Events.InteractionCreate, async interaction => {
         } else if (sub === "now") {
           const etaMin = Math.ceil((SHORTS_SAMPLE_SIZE * PACING_MS) / 60000);
           await interaction.reply(`Running a Shorts scan now (crypto) -- at ${SHORTS_SAMPLE_SIZE} candidates, that's about ${etaMin} min. I'll post here when it's ready.`);
-          runShortsDrop(interaction.channel, SHORTS_UNIVERSE, "Crypto").catch(err => {
+          runShortsDrop(interaction.channel).catch(err => {
             console.error(`Manual shorts run failed for guild ${interaction.guildId}: ${err.message}`);
             interaction.channel.send("Shorts scan failed partway through — check the bot logs.").catch(() => {});
           });

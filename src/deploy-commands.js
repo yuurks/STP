@@ -19,15 +19,7 @@ const commands = [
     .addSubcommand(sc => sc.setName("list").setDescription("Show the current watchlist"))
     .addSubcommand(sc => sc.setName("clear").setDescription("Remove every ticker from the watchlist"))
     .addSubcommand(sc =>
-      sc.setName("autobuild").setDescription("Replace the watchlist with the biggest potential movers from a candidate pool")
-        .addStringOption(o =>
-          o.setName("universe").setDescription("Candidate pool to scan (default: both)").setRequired(false)
-            .addChoices(
-              { name: "Stocks", value: "stocks" },
-              { name: "Crypto", value: "crypto" },
-              { name: "Both", value: "both" }
-            )
-        )
+      sc.setName("autobuild").setDescription("Replace the watchlist with the biggest potential movers from the crypto candidate pool")
         .addIntegerOption(o => o.setName("count").setDescription("How many of the biggest movers to keep, 1-50 (default 15)").setRequired(false))
     ),
 
@@ -75,14 +67,6 @@ const commands = [
       sc.setName("on").setDescription("Turn on scheduled autobuild")
         .addChannelOption(o => o.setName("channel").setDescription("Channel to post results in").setRequired(true))
         .addIntegerOption(o => o.setName("interval_hours").setDescription("How often to rebuild, in hours, min 24 (default 24)").setRequired(false))
-        .addStringOption(o =>
-          o.setName("universe").setDescription("Candidate pool to scan (default: both)").setRequired(false)
-            .addChoices(
-              { name: "Stocks", value: "stocks" },
-              { name: "Crypto", value: "crypto" },
-              { name: "Both", value: "both" }
-            )
-        )
         .addIntegerOption(o => o.setName("count").setDescription("How many of the biggest movers to keep, 1-50 (default 15)").setRequired(false))
     )
     .addSubcommand(sc => sc.setName("off").setDescription("Turn off scheduled autobuild")),
