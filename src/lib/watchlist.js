@@ -228,9 +228,9 @@ function allGuildsWithAlertDigestSchedule() {
   return Object.entries(all).filter(([, g]) => g.alertDigestSchedule);
 }
 
-// Recurring config for /shorts on -- two fixed daily drops (stock winner/loser at 4pm ET,
-// crypto at 8pm ET; see src/index.js) rather than a configurable interval, since the times are
-// tied to the NYSE close and a fixed evening crypto slot, not something worth exposing as an option.
+// Recurring config for /shorts on -- two fixed daily crypto drops (4pm and 8pm ET; see
+// src/index.js) rather than a configurable interval, since the times aren't something worth
+// exposing as an option.
 function setShortsSchedule(guildId, config) {
   const all = loadAll();
   const guild = ensureGuild(all, guildId);
@@ -244,12 +244,12 @@ function allGuildsWithShortsSchedule() {
   return Object.entries(all).filter(([, g]) => g.shortsSchedule);
 }
 
-// kind: "stock" | "crypto" -- tracked separately since they fire at different times of day.
-function markShortRun(guildId, kind, dateStr) {
+// slot: "1" (4pm) | "2" (8pm) -- tracked separately since they fire at different times of day.
+function markShortRun(guildId, slot, dateStr) {
   const all = loadAll();
   const guild = ensureGuild(all, guildId);
   if (!guild.shortsSchedule) return;
-  guild.shortsSchedule[kind === "crypto" ? "lastCryptoRunDate" : "lastStockRunDate"] = dateStr;
+  guild.shortsSchedule[slot === "2" ? "lastRunDate2" : "lastRunDate1"] = dateStr;
   saveAll(all);
 }
 

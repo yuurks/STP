@@ -14,50 +14,56 @@ const universe = require("./universe");
 const PACING_MS = 7500; // same as the bot -- stays under Twelve Data's free 8 req/min
 const sleep = ms => new Promise(res => setTimeout(res, ms));
 
-// Lower than /watch autobuild's $1M floor -- Shorts only needs one real mover per run, not a
-// diversified watchlist, so a smaller liquidity bar still screens out thin/illiquid noise
-// without excluding too much of the candidate pool. A huge % move on a handful of trades isn't
-// a real "biggest mover," just noise. Below this, a ticker is excluded from winner/loser
-// consideration entirely rather than merely deprioritized, so the result is never a thin-volume
-// fluke with an eye-catching number attached.
-const MIN_DOLLAR_VOLUME = 500_000;
+// A coin "bound to intake large amounts of volume" is one already showing unusual volume vs.
+// its OWN recent normal, not one that's already high-volume in absolute terms (that would just
+// bring back majors, the opposite of what a small-cap scan is for). Surge ratio = today's dollar
+// volume / the trailing 20-day average excluding today. >= this ratio is the bar for
+// consideration as winner/loser.
+const MIN_VOLUME_SURGE = 1.3;
+
+// Tiny absolute floor just to keep literally-dead tickers (near-zero baseline volume, where any
+// trade at all produces a huge, meaningless ratio) out of consideration -- much lower than
+// /watch autobuild's $1M, since small/mid caps are expected to be thin in absolute terms.
+const MIN_BASELINE_DOLLAR_VOLUME = 10_000;
 
 // Crypto trades round the clock, so "intraday" there means a trailing 24h window (96 x 15min
 // bars) rather than a bounded session -- stocks use a single ~6.5hr NYSE session (26 bars).
 function intradayBarCount(universeKind) {
-  return universeKind === "crypto" ? 96 : 26;
+  return universeKind.startsWith("crypto") ? 96 : 26;
 }
 
-// Scans a random sample of the given universe ("stocks" | "crypto") for the day's single
-// biggest gainer and loser among candidates with real trading volume behind them (>=
-// MIN_DOLLAR_VOLUME avg. dollar volume), then fetches each one's intraday bars for the chart.
+// Scans a random sample of the given universe (see universe.js for the "kind" options) for the
+// day's single biggest gainer and loser among candidates showing a real volume surge vs. their
+// own recent normal (>= MIN_VOLUME_SURGE), then fetches each one's intraday bars for the chart.
 // Falls back to the best mover regardless of volume only if literally nothing in the sample
-// clears the liquidity floor, so a run never comes back empty. Same output shape as
+// clears the surge bar, so a run never comes back empty. Same output shape as
 // scripts/find-movers.js's output (data/movers.json), plus a `universeKind` tag.
 async function findMover(universeKind, sampleSize) {
   const pool = universe.loadUniverse(universeKind);
   const candidates = universe.sample(pool, sampleSize);
 
   let winner = null, loser = null;
-  let liquidWinner = null, liquidLoser = null;
+  let surgingWinner = null, surgingLoser = null;
   let checked = 0;
 
   for (const symbol of candidates) {
     try {
       const rows = await fetchDailySeries(symbol, 30);
-      if (rows.length >= 2) {
+      if (rows.length >= 3) {
         const last = rows[rows.length - 1];
         const prev = rows[rows.length - 2];
         const pctChange = ((last.close - prev.close) / prev.close) * 100;
-        const dollarVolume = avgDollarVolume(rows);
-        const entry = { symbol, pctChange, price: last.close, dollarVolume };
+        const todayDollarVolume = last.close * last.volume;
+        const baselineDollarVolume = avgDollarVolume(rows.slice(0, -1));
+        const volumeSurgeRatio = baselineDollarVolume > 0 ? todayDollarVolume / baselineDollarVolume : 0;
+        const entry = { symbol, pctChange, price: last.close, volumeSurgeRatio };
 
         if (!winner || pctChange > winner.pctChange) winner = entry;
         if (!loser || pctChange < loser.pctChange) loser = entry;
 
-        if (dollarVolume >= MIN_DOLLAR_VOLUME) {
-          if (!liquidWinner || pctChange > liquidWinner.pctChange) liquidWinner = entry;
-          if (!liquidLoser || pctChange < liquidLoser.pctChange) liquidLoser = entry;
+        if (baselineDollarVolume >= MIN_BASELINE_DOLLAR_VOLUME && volumeSurgeRatio >= MIN_VOLUME_SURGE) {
+          if (!surgingWinner || pctChange > surgingWinner.pctChange) surgingWinner = entry;
+          if (!surgingLoser || pctChange < surgingLoser.pctChange) surgingLoser = entry;
         }
         checked++;
       }
@@ -67,10 +73,10 @@ async function findMover(universeKind, sampleSize) {
     await sleep(PACING_MS);
   }
 
-  // Prefer the volume-backed pick; only fall back to the unfiltered one if nothing in this
-  // sample cleared the liquidity floor at all.
-  winner = liquidWinner || winner;
-  loser = liquidLoser || loser;
+  // Prefer the volume-surging pick; only fall back to the unfiltered one if nothing in this
+  // sample cleared the surge bar at all.
+  winner = surgingWinner || winner;
+  loser = surgingLoser || loser;
 
   for (const entry of [winner, loser]) {
     if (!entry) continue;
@@ -98,9 +104,17 @@ function parseBarTime(t) {
 // of a "session" (there isn't one), so it reads differently even though both are driven by the
 // same first/last bar timestamps.
 function formatSessionLabel(times, universeKind) {
-  const fmt = d => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-  const range = `${fmt(parseBarTime(times[0]))}–${fmt(parseBarTime(times[times.length - 1]))} ET`;
-  return universeKind === "crypto" ? `Last 24 hours · ${range}` : `Today's session · ${range}`;
+  const fmtTime = d => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  const start = parseBarTime(times[0]);
+  const end = parseBarTime(times[times.length - 1]);
+
+  if (universeKind.startsWith("crypto")) {
+    // A ~24h window sampled at 15min bars lands back on the same clock time a day later --
+    // "10:15 PM-10:15 PM" reads as zero elapsed time without a date to disambiguate.
+    const fmtDate = d => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return `Last 24 hours · ${fmtDate(start)} ${fmtTime(start)} – ${fmtDate(end)} ${fmtTime(end)} ET`;
+  }
+  return `Today's session · ${fmtTime(start)}–${fmtTime(end)} ET`;
 }
 
 function formatMetaLine(times) {
@@ -179,17 +193,23 @@ function chartPaths(closes, x, y, w, h) {
   return { line, area, lastX: last[0], lastY: last[1] };
 }
 
-function cardSvg({ x, y, w, h, accent, accentFill, tagLabel, ticker, pctChange, openPrice, nowPrice, closes, timeframe }) {
+function cardSvg({ x, y, w, h, accent, accentFill, tagLabel, ticker, pctChange, openPrice, nowPrice, closes, timeframe, volumeSurgeRatio }) {
   const pad = 40;
   const chartH = 170;
   const chartY = y + h - pad - chartH - 40;
   const { line, area, lastX, lastY } = chartPaths(closes, x + pad, chartY, w - pad * 2, chartH);
   const pctText = `${pctChange >= 0 ? "+" : ""}${pctChange.toFixed(1)}%`;
+  const surgeText = volumeSurgeRatio ? `${volumeSurgeRatio.toFixed(1)}× VOLUME` : null;
+  const surgeWidth = surgeText ? 46 + surgeText.length * 15 : 0;
 
   return `
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="26" fill="${COLORS.card}" stroke="${accent}" stroke-opacity="0.45" stroke-width="2.5"/>
     <rect x="${x + pad}" y="${y + 30}" width="150" height="44" rx="10" fill="${accentFill}"/>
     <text x="${x + pad + 18}" y="${y + 60}" font-family="sans-serif" font-size="23" font-weight="800" letter-spacing="1.5" fill="${accent}">${escapeXml(tagLabel.toUpperCase())}</text>
+    ${surgeText ? `
+    <rect x="${x + w - pad - surgeWidth}" y="${y + 30}" width="${surgeWidth}" height="44" rx="10" fill="rgba(88,101,242,0.18)"/>
+    <text x="${x + w - pad - surgeWidth / 2}" y="${y + 60}" font-family="sans-serif" font-size="21" font-weight="800" letter-spacing="0.5" fill="${COLORS.cta}" text-anchor="middle">${escapeXml(surgeText)}</text>
+    ` : ""}
     <text x="${x + pad}" y="${y + 140}" font-family="monospace" font-size="52" font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(ticker)}</text>
     <text x="${x + pad}" y="${y + 235}" font-family="sans-serif" font-size="92" font-weight="900" fill="${accent}">${pctText}</text>
     <text x="${x + pad}" y="${y + 278}" font-family="sans-serif" font-size="29" fill="${COLORS.textSecondary}">Open <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(openPrice)}</tspan> → Now <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(nowPrice)}</tspan></text>
@@ -236,14 +256,14 @@ async function generateShortImage(winner, loser, universeKind = "stocks") {
     x: cardX, y: winnerY, w: cardW, h: cardH, accent: COLORS.winner, accentFill: COLORS.winnerFill,
     tagLabel: "Winner", ticker: winner.symbol, pctChange: winner.pctChange,
     openPrice: formatMoney(winner.intraday.closes[0]), nowPrice: formatMoney(winner.price),
-    closes: winner.intraday.closes, timeframe: sessionLabel
+    closes: winner.intraday.closes, timeframe: sessionLabel, volumeSurgeRatio: winner.volumeSurgeRatio
   })}
 
   ${cardSvg({
     x: cardX, y: loserY, w: cardW, h: cardH, accent: COLORS.loser, accentFill: COLORS.loserFill,
     tagLabel: "Loser", ticker: loser.symbol, pctChange: loser.pctChange,
     openPrice: formatMoney(loser.intraday.closes[0]), nowPrice: formatMoney(loser.price),
-    closes: loser.intraday.closes, timeframe: sessionLabel
+    closes: loser.intraday.closes, timeframe: sessionLabel, volumeSurgeRatio: loser.volumeSurgeRatio
   })}
 
   <rect x="${W / 2 - 230}" y="1610" width="460" height="90" rx="45" fill="${COLORS.cta}"/>

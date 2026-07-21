@@ -226,6 +226,9 @@ async function runAlertHistory(channel, eligible) {
 // it runs twice a day automatically, so a smaller number keeps the combined daily cost from
 // eating into the quota the rest of the bot's features (autoscan, alerts, etc.) depend on.
 const SHORTS_SAMPLE_SIZE = 100;
+// Crypto only, and skewed toward smaller-cap coins -- see universe.js's SMALLCAP_RANK_CUTOFF
+// and shorts.js's volume-surge filter for how "small cap, real volume interest" is approximated.
+const SHORTS_UNIVERSE = "crypto-smallcap";
 
 // America/New_York wall-clock time, used to fire the Shorts drop at a fixed local time
 // (4:00pm/8:00pm ET) regardless of where the server hosting the bot actually runs.
@@ -351,30 +354,30 @@ client.once(Events.ClientReady, c => {
       }
     }
 
-    // Two fixed daily drops (4:00pm ET stocks, 8:00pm ET crypto) rather than an interval --
-    // `date !== lastRunDate` guards against firing more than once during that minute's window
-    // and survives restarts since the date is persisted, not just held in memory.
+    // Two fixed daily drops (4:00pm and 8:00pm ET), both scanning small/mid-cap crypto -- rather
+    // than an interval. `date !== lastRunDate` guards against firing more than once during that
+    // minute's window and survives restarts since the date is persisted, not just held in memory.
     const { date, hhmm } = nowInEastern();
     for (const [guildId, guildData] of watchlist.allGuildsWithShortsSchedule()) {
-      const { stocksChannelId, cryptoChannelId, lastStockRunDate, lastCryptoRunDate } = guildData.shortsSchedule;
+      const { channelId, lastRunDate1, lastRunDate2 } = guildData.shortsSchedule;
 
-      if (hhmm === "16:00" && lastStockRunDate !== date) {
-        watchlist.markShortRun(guildId, "stock", date);
+      if (hhmm === "16:00" && lastRunDate1 !== date) {
+        watchlist.markShortRun(guildId, "1", date);
         try {
-          const channel = await client.channels.fetch(stocksChannelId);
-          await runShortsDrop(channel, "stocks", "Stocks");
+          const channel = await client.channels.fetch(channelId);
+          await runShortsDrop(channel, SHORTS_UNIVERSE, "Crypto");
         } catch (err) {
-          console.error(`Shorts (stocks) drop failed for guild ${guildId}: ${err.message}`);
+          console.error(`Shorts drop (4pm) failed for guild ${guildId}: ${err.message}`);
         }
       }
 
-      if (hhmm === "20:00" && lastCryptoRunDate !== date) {
-        watchlist.markShortRun(guildId, "crypto", date);
+      if (hhmm === "20:00" && lastRunDate2 !== date) {
+        watchlist.markShortRun(guildId, "2", date);
         try {
-          const channel = await client.channels.fetch(cryptoChannelId);
-          await runShortsDrop(channel, "crypto", "Crypto");
+          const channel = await client.channels.fetch(channelId);
+          await runShortsDrop(channel, SHORTS_UNIVERSE, "Crypto");
         } catch (err) {
-          console.error(`Shorts (crypto) drop failed for guild ${guildId}: ${err.message}`);
+          console.error(`Shorts drop (8pm) failed for guild ${guildId}: ${err.message}`);
         }
       }
     }
@@ -625,33 +628,25 @@ client.on(Events.InteractionCreate, async interaction => {
       case "shorts": {
         const sub = interaction.options.getSubcommand();
         if (sub === "on") {
-          const stocksChannel = interaction.options.getChannel("stocks_channel");
-          const cryptoChannel = interaction.options.getChannel("crypto_channel");
+          const channel = interaction.options.getChannel("channel");
           watchlist.setShortsSchedule(interaction.guildId, {
-            stocksChannelId: stocksChannel.id, cryptoChannelId: cryptoChannel.id,
-            lastStockRunDate: null, lastCryptoRunDate: null
+            channelId: channel.id, lastRunDate1: null, lastRunDate2: null
           });
           await interaction.reply(
-            `Shorts on: stock winner/loser drops daily at 4:00pm ET in ${stocksChannel}, ` +
-            `crypto at 8:00pm ET in ${cryptoChannel}. Each post includes a ready-to-use image ` +
-            "-- save it and post it as a Short, or use it as-is. Posting to YouTube is still on you."
+            `Shorts on: small/mid-cap crypto winner/loser drops daily at 4:00pm and 8:00pm ET in ${channel}. ` +
+            "Each post includes a ready-to-use image -- save it and post it as a Short, or use it as-is. " +
+            "Posting to YouTube is still on you."
           );
         } else if (sub === "off") {
           watchlist.setShortsSchedule(interaction.guildId, null);
           await interaction.reply("Shorts schedule turned off.");
         } else if (sub === "now") {
-          const which = interaction.options.getString("which") || "both";
-          const etaMin = Math.ceil((SHORTS_SAMPLE_SIZE * PACING_MS) / 60000) * (which === "both" ? 2 : 1);
-          await interaction.reply(`Running a Shorts scan now (${which}) -- at ${SHORTS_SAMPLE_SIZE} candidates per side, that's about ${etaMin} min. I'll post here when it's ready.`);
-          (async () => {
-            try {
-              if (which === "stocks" || which === "both") await runShortsDrop(interaction.channel, "stocks", "Stocks");
-              if (which === "crypto" || which === "both") await runShortsDrop(interaction.channel, "crypto", "Crypto");
-            } catch (err) {
-              console.error(`Manual shorts run failed for guild ${interaction.guildId}: ${err.message}`);
-              interaction.channel.send("Shorts scan failed partway through — check the bot logs.").catch(() => {});
-            }
-          })();
+          const etaMin = Math.ceil((SHORTS_SAMPLE_SIZE * PACING_MS) / 60000);
+          await interaction.reply(`Running a Shorts scan now (crypto) -- at ${SHORTS_SAMPLE_SIZE} candidates, that's about ${etaMin} min. I'll post here when it's ready.`);
+          runShortsDrop(interaction.channel, SHORTS_UNIVERSE, "Crypto").catch(err => {
+            console.error(`Manual shorts run failed for guild ${interaction.guildId}: ${err.message}`);
+            interaction.channel.send("Shorts scan failed partway through — check the bot logs.").catch(() => {});
+          });
         }
         break;
       }

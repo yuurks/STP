@@ -4,7 +4,7 @@
 // scripts/generate-short.js to turn into a finished Shorts visual.
 //
 // Run with: node scripts/find-movers.js [sampleSize] [universe]
-// universe: stocks | crypto | both (default: both)
+// universe: stocks | crypto | crypto-smallcap | both (default: both)
 // Uses the same TWELVE_DATA_API_KEY and pacing as the live bot, so it draws from the same
 // shared daily request quota -- see the printed cost estimate before running.
 
@@ -15,7 +15,7 @@ const { findMover } = require("../src/lib/shorts");
 
 const PACING_MS = 7500;
 const sampleSize = Math.min(543, Math.max(10, parseInt(process.argv[2], 10) || 200));
-const universeKind = ["stocks", "crypto", "both"].includes(process.argv[3]) ? process.argv[3] : "both";
+const universeKind = ["stocks", "crypto", "crypto-smallcap", "both"].includes(process.argv[3]) ? process.argv[3] : "both";
 
 async function main() {
   const etaMin = Math.ceil((sampleSize * PACING_MS) / 60000);

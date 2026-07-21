@@ -121,9 +121,9 @@ exercised by hand in a real server.
 | `/portfolio start starting_cash:10000` | Start a simulated paper-trading portfolio (no real money) that follows this bot's own Buy/Sell signals |
 | `/portfolio status` | Show current cash, open positions with live unrealized P&L, total return, and recent closed trades |
 | `/portfolio reset` | Wipe the paper portfolio and start over |
-| `/shorts on stocks_channel:#... crypto_channel:#...` | Turn on the daily YouTube Shorts content drop — scans for today's biggest winner/loser and posts a ready-to-use image: stocks at 4:00pm ET, crypto at 8:00pm ET |
+| `/shorts on channel:#...` | Turn on the daily YouTube Shorts content drop — scans small/mid-cap crypto for today's biggest winner/loser showing a real volume surge, posts a ready-to-use image, twice a day (4:00pm and 8:00pm ET) |
 | `/shorts off` | Turn off the daily Shorts drop |
-| `/shorts now which:both` | Run a Shorts scan immediately instead of waiting for the schedule |
+| `/shorts now` | Run a Shorts scan immediately instead of waiting for the schedule |
 
 ## Notes and honest limitations
 
@@ -201,25 +201,30 @@ exercised by hand in a real server.
   at the stop price rather than the latest close if so (shown as "Stopped out: X/N" per verdict
   type). `/alerts history` can only do this for alerts fired after ATR started being logged
   alongside them — older log entries fall back to a plain latest-price-vs-fired-price comparison.
-- **`/shorts` can't fully automate posting to YouTube**: at the scheduled time the bot scans a
-  liquidity-filtered sample of `stocks.txt` (4pm ET) or `crypto.txt` (8pm ET) for the day's
-  single biggest gainer/loser (excluding thin-volume names -- see below), renders the result as a
-  1080x1920 PNG (built as SVG server-side and rasterized with `sharp`, not a headless browser --
-  puppeteer was ruled out early on as too heavy, ~300MB, for what this needs), and posts it
-  directly as a Discord image. Turning that into an actual uploaded YouTube Short and posting it
-  still needs a human -- the bot won't ever render/mux video or touch YouTube's API on its own.
-  Each scheduled run samples 100 candidates (not the full 300 `/watch autobuild` uses)
-  specifically to keep two automatic runs a day from eating too much of the shared 800/day
-  request quota. A separate manual pipeline (`scripts/find-movers.js` + `scripts/generate-short.js`)
-  still produces an animated, interactive HTML version of the same visual (count-up numbers,
-  self-drawing chart) for when you want something to screen-record instead of a static image.
-- **`/shorts` only picks volume-backed movers**: $500K/day avg. dollar-volume floor (lower than
-  `/watch autobuild`'s $1M -- Shorts only needs one real mover per run, not a diversified
-  watchlist, so a slightly smaller liquidity bar still screens out thin/illiquid noise without
-  excluding too much of the candidate pool). A huge % move on a handful of trades gets excluded
-  rather than shown as the "biggest mover," since that's noise, not a real move. Falls back to
-  the best mover regardless of volume only if literally nothing in that run's sample clears the
-  floor.
+- **`/shorts` can't fully automate posting to YouTube**: at the scheduled time (4pm and 8pm ET,
+  both) the bot scans a sample of small/mid-cap crypto for the day's single biggest gainer/loser,
+  renders the result as a 1080x1920 PNG (built as SVG server-side and rasterized with `sharp`, not
+  a headless browser -- puppeteer was ruled out early on as too heavy, ~300MB, for what this
+  needs), and posts it directly as a Discord image. Turning that into an actual uploaded YouTube
+  Short and posting it still needs a human -- the bot won't ever render/mux video or touch
+  YouTube's API on its own. Each scheduled run samples 100 candidates (not the full 300 `/watch
+  autobuild` uses) specifically to keep two automatic runs a day from eating too much of the
+  shared 800/day request quota. A separate manual pipeline (`scripts/find-movers.js` +
+  `scripts/generate-short.js`) still produces an animated, interactive HTML version of the same
+  visual (count-up numbers, self-drawing chart) for when you want something to screen-record
+  instead of a static image.
+- **`/shorts` is crypto-only, skewed toward small/mid-cap**: `crypto.txt` is compiled roughly
+  biggest-to-smallest by market cap, so the scan pool skips the top ~50 entries (the majors) and
+  samples from the rest -- an approximation, not real live market-cap data (Twelve Data's free
+  tier doesn't expose one). Honest limitation: Twelve Data's free crypto coverage thins out fast
+  past the majors, so a real chunk of each sample (often a third or more) returns no data at all
+  and gets skipped -- the "checked" count will run noticeably lower than the candidate count.
+- **`/shorts` prioritizes volume *surges*, not high absolute volume**: instead of a fixed
+  liquidity floor (which would just exclude small caps entirely, the opposite of the point), a
+  candidate needs today's dollar volume at least 1.3x its own trailing 20-day average to be
+  considered "the" winner/loser -- the idea being a small-cap coin suddenly trading well above its
+  own normal is a real signal of interest building, not just noise. Falls back to the best mover
+  regardless of volume only if nothing in that run's sample clears the surge bar.
 - **No real order execution**: `/portfolio` simulates trading (see below), but it is not
   connected to any brokerage and never risks real money. Turning this into real automated
   trades would require a brokerage API (e.g. Alpaca, Interactive Brokers), real capital at risk

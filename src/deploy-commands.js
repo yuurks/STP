@@ -89,24 +89,13 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("shorts")
-    .setDescription("Automatic daily YouTube Shorts assets: today's biggest winner & loser, stocks and crypto")
+    .setDescription("Automatic daily YouTube Shorts assets: today's biggest small/mid-cap crypto winner & loser")
     .addSubcommand(sc =>
-      sc.setName("on").setDescription("Turn on the daily Shorts drop (4pm ET stocks, 8pm ET crypto)")
-        .addChannelOption(o => o.setName("stocks_channel").setDescription("Channel for the 4pm ET stock drop").setRequired(true))
-        .addChannelOption(o => o.setName("crypto_channel").setDescription("Channel for the 8pm ET crypto drop").setRequired(true))
+      sc.setName("on").setDescription("Turn on the daily Shorts drop (4pm and 8pm ET)")
+        .addChannelOption(o => o.setName("channel").setDescription("Channel to post both daily drops in").setRequired(true))
     )
     .addSubcommand(sc => sc.setName("off").setDescription("Turn off the daily Shorts drop"))
-    .addSubcommand(sc =>
-      sc.setName("now").setDescription("Run a Shorts scan right now instead of waiting for the schedule")
-        .addStringOption(o =>
-          o.setName("which").setDescription("Which to run (default: both)").setRequired(false)
-            .addChoices(
-              { name: "Stocks", value: "stocks" },
-              { name: "Crypto", value: "crypto" },
-              { name: "Both", value: "both" }
-            )
-        )
-    ),
+    .addSubcommand(sc => sc.setName("now").setDescription("Run a Shorts scan right now instead of waiting for the schedule")),
 
   new SlashCommandBuilder()
     .setName("portfolio")

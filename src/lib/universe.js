@@ -15,10 +15,17 @@ function loadLines(file) {
     .filter(line => line && !line.startsWith("#"));
 }
 
-// kind: "stocks" | "crypto" | "both"
+// crypto.txt is compiled roughly biggest-to-smallest by market cap (see its own header comment)
+// -- skipping this many of the top entries approximates "small/mid cap" without needing a real
+// market-cap data source (Twelve Data's free tier doesn't expose one). Approximate, not exact:
+// the file's ranking is a point-in-time compile, not a live feed.
+const SMALLCAP_RANK_CUTOFF = 50;
+
+// kind: "stocks" | "crypto" | "crypto-smallcap" | "both"
 function loadUniverse(kind) {
   if (kind === "stocks") return loadLines(STOCKS_FILE);
   if (kind === "crypto") return loadLines(CRYPTO_FILE);
+  if (kind === "crypto-smallcap") return loadLines(CRYPTO_FILE).slice(SMALLCAP_RANK_CUTOFF);
   return [...loadLines(STOCKS_FILE), ...loadLines(CRYPTO_FILE)];
 }
 
