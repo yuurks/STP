@@ -307,7 +307,10 @@ function analyze(rows) {
   const filtered = applyConfidenceFilter(raw, adxData[n], rows[n].volume, avgVolumeData[n]);
   // Today's volume vs. its own 20-day average -- a ratio, not just the above/below-average
   // binary the confidence filter uses, so callers who care about a real surge (not just "any
-  // above-average day") have something to threshold on.
+  // above-average day") have something to threshold on. Note the average includes today itself
+  // (a plain trailing SMA), so a genuine spike pulls its own baseline up and the ratio reads
+  // lower than a "today vs. the 19 days before it" comparison would -- a real, if usually minor,
+  // damping effect worth knowing about if this is ever used as a hard filter rather than display.
   const volumeSurgeRatio = avgVolumeData[n] > 0 ? rows[n].volume / avgVolumeData[n] : null;
 
   return {

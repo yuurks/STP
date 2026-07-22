@@ -1,7 +1,7 @@
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
 const {
-  findUnfilledGap, atr, adx, backtest, scoreAt,
+  findUnfilledGap, atr, adx, backtest, scoreAt, analyze,
   dailyReturns, correlation, avgDollarVolume, selectDiversified
 } = require("../src/lib/indicators");
 
@@ -147,6 +147,42 @@ describe("scoreAt - Golden Cross / Death Cross", () => {
     const rows = [enriched(95, null), enriched(101, null)];
     const { notes } = scoreAt(rows, 1);
     assert.ok(!notes.some(n => n.includes("Cross")));
+  });
+});
+
+describe("analyze", () => {
+  // The full pipeline (/scan, /alerts, /discover, /watch autobuild, /portfolio all call this)
+  // had no direct test before -- only its individual pieces (atr, adx, scoreAt) were covered.
+  test("returns the full expected shape on a plain series", () => {
+    const rows = [];
+    for (let i = 0; i < 40; i++) rows.push(row(`d${i}`, 101, 99, 100, 1000000));
+    const result = analyze(rows);
+    assert.ok(Array.isArray(result.rows));
+    assert.equal(result.rows.length, rows.length);
+    assert.ok(result.last);
+    assert.equal(result.last.close, 100);
+    assert.ok(["Strong Buy", "Buy", "Neutral", "Sell", "Strong Sell"].includes(result.verdict));
+    assert.equal(typeof result.score, "number");
+    assert.ok(Array.isArray(result.notes));
+    assert.equal(typeof result.volatility, "number");
+  });
+
+  test("volumeSurgeRatio is today's volume over its own trailing 20-day average (today included)", () => {
+    const rows = [];
+    for (let i = 0; i < 25; i++) rows.push(row(`d${i}`, 101, 99, 100, 100)); // flat volume=100
+    rows[rows.length - 1] = row("today", 101, 99, 100, 2000); // today spikes to 2000
+    const result = analyze(rows);
+    // avg = SMA(20) of the last 20 volumes, which includes today's 2000 -- so it's (19*100 +
+    // 2000) / 20, not a naive "2000 / 100 = 20x" that would exclude today from its own baseline.
+    const expectedAvg = (19 * 100 + 2000) / 20;
+    assert.ok(Math.abs(result.volumeSurgeRatio - 2000 / expectedAvg) < 1e-9);
+  });
+
+  test("volumeSurgeRatio is null when the trailing average volume is 0 (e.g. crypto, no volume data)", () => {
+    const rows = [];
+    for (let i = 0; i < 25; i++) rows.push(row(`d${i}`, 101, 99, 100, 0));
+    const result = analyze(rows);
+    assert.equal(result.volumeSurgeRatio, null);
   });
 });
 

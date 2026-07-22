@@ -33,6 +33,15 @@ describe("applyResults - entries", () => {
     assert.equal(events[0].type, "open");
   });
 
+  test("floors stopPrice at 0 for a cheap coin where 2x ATR exceeds the price itself", () => {
+    // A real scenario for the sub-cent coins this bot now targets: entryPrice - 2*atr going
+    // negative would otherwise store/display a nonsensical negative stop price.
+    const p = createPortfolio(10000);
+    const { portfolio } = applyResults(p, [result("MICROCOIN", "Buy", 0.003, 0.0029, 0.01)], 1000);
+    assert.ok(portfolio.positions.MICROCOIN);
+    assert.equal(portfolio.positions.MICROCOIN.stopPrice, 0);
+  });
+
   test("does not open a position on Neutral or Sell", () => {
     const p = createPortfolio(10000);
     const { portfolio, events } = applyResults(p, [
