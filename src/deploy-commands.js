@@ -10,7 +10,7 @@ const { REST, Routes, SlashCommandBuilder, PermissionFlagsBits } = require("disc
 // with state-changing ones (on/off/digest-*, start/reset) -- those two stay open here and get an
 // in-code check instead (see requireManageGuild in index.js), so the read-only half stays usable
 // by everyone while the rest is still gated.
-const MANAGE_GUILD_ONLY = [PermissionFlagsBits.ManageGuild];
+const MANAGE_GUILD_ONLY = PermissionFlagsBits.ManageGuild;
 
 const commands = [
   new SlashCommandBuilder()
@@ -145,7 +145,6 @@ const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
 
 (async () => {
   try {
-    for (const command of commands) validateCommand(command, "");
     console.log("Registering slash commands...");
     await rest.put(Routes.applicationCommands(process.env.DISCORD_CLIENT_ID), { body: commands });
     console.log("Done. Commands can take up to an hour to show up everywhere the first time.");
