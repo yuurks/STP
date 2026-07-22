@@ -93,6 +93,17 @@ const commands = [
     .addSubcommand(sc => sc.setName("now").setDescription("Run a Discover scan right now instead of waiting for the schedule")),
 
   new SlashCommandBuilder()
+    .setName("degen")
+    .setDescription("HIGH RISK: alerts on brand-new Solana pairs with real liquidity + buy pressure (DexScreener, unvalidated)")
+    .addSubcommand(sc =>
+      sc.setName("on").setDescription("Turn on recurring Degen scans")
+        .addChannelOption(o => o.setName("channel").setDescription("Channel to post qualifying pairs in").setRequired(true))
+        .addIntegerOption(o => o.setName("interval_minutes").setDescription("How often to scan, in minutes, min 2 (default 10)").setRequired(false))
+    )
+    .addSubcommand(sc => sc.setName("off").setDescription("Turn off recurring Degen scans"))
+    .addSubcommand(sc => sc.setName("now").setDescription("Run a Degen scan right now instead of waiting for the schedule")),
+
+  new SlashCommandBuilder()
     .setName("portfolio")
     .setDescription("Simulated paper-trading portfolio driven by this bot's own signals (no real money)")
     .addSubcommand(sc =>

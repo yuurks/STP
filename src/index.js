@@ -9,8 +9,10 @@ const watchlist = require("./lib/watchlist");
 const universe = require("./lib/universe");
 const portfolioLib = require("./lib/portfolio");
 const shorts = require("./lib/shorts");
+const degen = require("./lib/degen");
+const { findDegenCandidates } = degen;
 const {
-  scanEmbed, alertEmbed, discoverEmbed, volatilityEmbed, backtestEmbed, alertHistoryEmbed, portfolioEmbed, shortsEmbed, logoAttachment
+  scanEmbed, alertEmbed, discoverEmbed, degenEmbed, volatilityEmbed, backtestEmbed, alertHistoryEmbed, portfolioEmbed, shortsEmbed, logoAttachment
 } = require("./lib/embeds");
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -301,6 +303,20 @@ async function runDiscoverScan(guildId, channel) {
   return fired;
 }
 
+// /degen scans DexScreener's rolling feed of newly-profiled Solana tokens for real liquidity +
+// real buy pressure (see src/lib/degen.js for the exact filters and why this can't use the
+// RSI/MACD/ADX engine at all). Uses DexScreener's own 60 req/min budget, entirely separate from
+// Twelve Data's 800/day -- doesn't compete with any other feature's quota.
+async function runDegenScan(guildId, channel) {
+  const alerted = new Set(watchlist.getDegenAlerted(guildId));
+  const { checked, candidates } = await findDegenCandidates(alerted);
+  if (candidates.length) {
+    watchlist.addDegenAlerted(guildId, candidates.map(c => c.baseToken.address));
+    await channel.send({ embeds: [degenEmbed(candidates)], files: [logoAttachment()] });
+  }
+  return { checked, candidates };
+}
+
 // Fires only for tickers whose verdict is actionable (not Neutral) and has changed since the
 // last check -- so a ticker sitting at "Buy" doesn't re-alert every interval, only on the
 // Neutral->Buy (or Buy->Sell, etc.) transition.
@@ -438,6 +454,20 @@ client.once(Events.ClientReady, c => {
         await runDiscoverScan(guildId, channel);
       } catch (err) {
         console.error(`Discover scan failed for guild ${guildId}: ${err.message}`);
+      }
+    }
+
+    for (const [guildId, guildData] of watchlist.allGuildsWithDegenSchedule()) {
+      const { channelId, intervalMinutes, lastRun } = guildData.degenSchedule;
+      const due = !lastRun || now - lastRun >= intervalMinutes * 60 * 1000;
+      if (!due) continue;
+
+      watchlist.markDegenRun(guildId, now);
+      try {
+        const channel = await client.channels.fetch(channelId);
+        await runDegenScan(guildId, channel);
+      } catch (err) {
+        console.error(`Degen scan failed for guild ${guildId}: ${err.message}`);
       }
     }
   }, 60 * 1000);
@@ -741,6 +771,35 @@ client.on(Events.InteractionCreate, async interaction => {
           }).catch(err => {
             console.error(`Manual discover run failed for guild ${interaction.guildId}: ${err.message}`);
             interaction.channel.send("Discover scan failed partway through — check the bot logs.").catch(() => {});
+          });
+        }
+        break;
+      }
+
+      case "degen": {
+        const sub = interaction.options.getSubcommand();
+        if (sub === "on") {
+          const channel = interaction.options.getChannel("channel");
+          const requested = interaction.options.getInteger("interval_minutes");
+          const intervalMinutes = Math.max(2, requested || 10);
+          watchlist.setDegenSchedule(interaction.guildId, { channelId: channel.id, intervalMinutes, lastRun: null });
+          await interaction.reply(
+            `Degen on: every ${intervalMinutes} min, scanning DexScreener's newest Solana pairs for real liquidity ` +
+            `(≥$${degen.MIN_LIQUIDITY_USD.toLocaleString()}) and real buy pressure (≥${degen.MIN_BUY_SELL_RATIO}x buys/sells, ` +
+            `${degen.MIN_H1_TXNS}+ trades/hr) -- posting to ${channel} only when one qualifies. ` +
+            "**High risk, unvalidated**: brand-new pairs can be rugged, honeypotted, or wash-traded, and this can never be " +
+            "backtested (no historical data exists for a token that's existed for hours). Not a prediction -- do your own research."
+          );
+        } else if (sub === "off") {
+          watchlist.setDegenSchedule(interaction.guildId, null);
+          await interaction.reply("Degen schedule turned off.");
+        } else if (sub === "now") {
+          await interaction.reply("Running a Degen scan now -- this is fast (DexScreener, not Twelve Data), posting here when it's done.");
+          runDegenScan(interaction.guildId, interaction.channel).then(async ({ candidates }) => {
+            if (!candidates.length) await interaction.channel.send("Degen scan finished -- nothing cleared the bar this run.");
+          }).catch(err => {
+            console.error(`Manual degen run failed for guild ${interaction.guildId}: ${err.message}`);
+            interaction.channel.send("Degen scan failed partway through — check the bot logs.").catch(() => {});
           });
         }
         break;

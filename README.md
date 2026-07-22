@@ -127,6 +127,9 @@ exercised by hand in a real server.
 | `/discover on channel:#...` | Turn on recurring scans of the crypto pool for a fresh Buy/Strong Buy (RSI/MACD/EMA scoring + confirmed ADX trend) — posts an alert only when one qualifies, so you can look and decide, default every 4h |
 | `/discover off` | Turn off recurring Discover scans |
 | `/discover now` | Run a Discover scan immediately instead of waiting for the schedule |
+| `/degen on channel:#...` | **HIGH RISK, unvalidated** — turn on recurring scans of DexScreener's newest Solana pairs for real liquidity + real buy pressure, default every 10 min. See limitations below before using this |
+| `/degen off` | Turn off recurring Degen scans |
+| `/degen now` | Run a Degen scan immediately instead of waiting for the schedule |
 
 ## Notes and honest limitations
 
@@ -247,6 +250,28 @@ exercised by hand in a real server.
   originally requested. Tracks verdicts in its own storage bucket, separate from the watchlist's,
   so a `/scan` on a symbol that's also on your watchlist doesn't suppress a `/discover` alert on
   it (or vice versa).
+- **`/degen` is a fundamentally different, much higher-risk feature -- read this before turning
+  it on**: this bot's entire indicator engine (RSI/MACD/ADX/SMA/EMA) needs a historical time
+  series of past prices, and Twelve Data simply has no coverage of brand-new tokens like
+  Solana meme/pump.fun coins at all. `/degen` uses [DexScreener's free API](https://docs.dexscreener.com/api/reference)
+  instead (no key needed, 60 req/min, entirely separate from Twelve Data's 800/day -- doesn't
+  compete with any other feature's quota) -- but that API only exposes a live snapshot (current
+  price, liquidity, and buy/sell counts over rolling 5m/1h/6h/24h windows), never historical
+  candles. So `/degen` can't run the RSI/MACD/ADX engine at all -- it's a different model
+  entirely: liquidity (≥$5K, `MIN_LIQUIDITY_USD` in `src/lib/degen.js`) + real buy pressure
+  (≥2x buys/sells over the last hour, with a minimum trade count so the ratio isn't computed
+  from a handful of trades) + pair age under 48h. It scans DexScreener's rolling feed of
+  newly-profiled Solana tokens (`/token-profiles/latest/v1`, filtered client-side to
+  `chainId === "solana"`) -- a feed of the last ~15-30 minutes of activity, not an archive, and
+  only tokens whose creator submitted profile metadata, not literally every pair that launches.
+  **This can never be backtested** -- `/backtest` works by replaying real history, and there is
+  no history for a token that's existed for an hour, so this is permanently unvalidated by
+  design, more so than anything else in this bot. And unlike everything else here, this touches
+  a category where **rug pulls, honeypot contracts (the contract blocks selling), and
+  wash-traded fake volume are common** -- the liquidity and buy-pressure filters catch some
+  obvious noise, they are not a safety check and cannot detect any of those in advance. Every
+  alert links to the pair's DexScreener page so you can look at the actual chart/holders
+  yourself before doing anything -- treat that as mandatory, not optional.
 - **No real order execution**: `/portfolio` simulates trading (see below), but it is not
   connected to any brokerage and never risks real money. Turning this into real automated
   trades would require a brokerage API (e.g. Alpaca, Interactive Brokers), real capital at risk

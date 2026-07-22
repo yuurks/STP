@@ -223,6 +223,43 @@ function allGuildsWithDiscoverSchedule() {
   return Object.entries(all).filter(([, g]) => g.discoverSchedule);
 }
 
+// /degen tracks which Solana token addresses have already been alerted on, so the same token
+// doesn't get re-alerted every scan just for still being in DexScreener's rolling "newest
+// profiles" feed. Capped the same way alert history is, so this can't grow forever.
+const MAX_DEGEN_ALERTED = 500;
+function getDegenAlerted(guildId) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  return guild.degenAlerted || [];
+}
+
+function addDegenAlerted(guildId, addresses) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.degenAlerted = [...new Set([...(guild.degenAlerted || []), ...addresses])].slice(-MAX_DEGEN_ALERTED);
+  saveAll(all);
+}
+
+function setDegenSchedule(guildId, config) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.degenSchedule = config;
+  saveAll(all);
+  return guild.degenSchedule;
+}
+
+function markDegenRun(guildId, timestamp) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  if (guild.degenSchedule) guild.degenSchedule.lastRun = timestamp;
+  saveAll(all);
+}
+
+function allGuildsWithDegenSchedule() {
+  const all = loadAll();
+  return Object.entries(all).filter(([, g]) => g.degenSchedule);
+}
+
 // Every fired alert gets logged here so /alerts history can check back later on what the price
 // actually did -- real forward performance, not a simulation. Capped so this can't grow forever.
 const MAX_ALERT_HISTORY = 200;
@@ -328,6 +365,7 @@ module.exports = {
   setShortsSchedule, allGuildsWithShortsSchedule, markShortRun,
   getDiscoverVerdicts, saveDiscoverVerdicts,
   setDiscoverSchedule, markDiscoverRun, allGuildsWithDiscoverSchedule,
+  getDegenAlerted, addDegenAlerted, setDegenSchedule, markDegenRun, allGuildsWithDegenSchedule,
   getPortfolio, startPortfolio, savePortfolio, resetPortfolio,
   normalizeSymbol, isValidTicker
 };
