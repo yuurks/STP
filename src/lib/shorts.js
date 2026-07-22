@@ -71,13 +71,19 @@ function parseBarTime(t) {
 
 // Crypto's intraday window is a trailing 24h, not a bounded session -- and since 96 x 15min bars
 // lands back on the exact same clock time a day later, the date has to be shown too ("10:15 PM
-// -10:15 PM" alone would read as zero elapsed time).
+// -10:15 PM" alone would read as zero elapsed time). Thinly-traded coins can have real gaps in
+// their 15min bars (no trade in that window), so Twelve Data has to reach back further than 24h
+// to fill 96 of them -- confirmed in practice (a real small-cap coin's "96 bars" spanned 8 days,
+// not 24h). Claiming "Last 24 hours" on a chart that's actually over a week wide would be a real,
+// visible lie, so the label itself reflects whichever is actually true.
 function formatSessionLabel(times) {
   const fmtTime = d => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   const fmtDate = d => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   const start = parseBarTime(times[0]);
   const end = parseBarTime(times[times.length - 1]);
-  return `Last 24 hours · ${fmtDate(start)} ${fmtTime(start)} – ${fmtDate(end)} ${fmtTime(end)} ET`;
+  const spanHours = (end - start) / 3600000;
+  const label = spanHours <= 30 ? "Last 24 hours" : "Recent activity (thin trading)";
+  return `${label} · ${fmtDate(start)} ${fmtTime(start)} – ${fmtDate(end)} ${fmtTime(end)} ET`;
 }
 
 function formatMetaLine(times) {
@@ -115,7 +121,8 @@ function generateShortHtml(winner, loser) {
     .split("{{LOSER_OPEN}}").join(formatMoney(loser.intraday.closes[0]))
     .split("{{LOSER_PRICE}}").join(formatMoney(loser.price))
     .split("{{LOSER_CLOSES}}").join(JSON.stringify(round2(loser.intraday.closes)))
-    .split("{{SESSION_LABEL}}").join(formatSessionLabel(winner.intraday.times))
+    .split("{{WINNER_SESSION_LABEL}}").join(formatSessionLabel(winner.intraday.times))
+    .split("{{LOSER_SESSION_LABEL}}").join(formatSessionLabel(loser.intraday.times))
     .split("{{META_LINE}}").join(formatMetaLine(winner.intraday.times));
 }
 
@@ -197,7 +204,12 @@ async function generateShortImage(winner, loser) {
 
   const W = 1080, H = 1920;
   const logoSrc = `data:image/png;base64,${fs.readFileSync(LOGO_PATH).toString("base64")}`;
-  const sessionLabel = formatSessionLabel(winner.intraday.times);
+  // Each card must use its OWN ticker's timeframe -- winner and loser are different tickers
+  // that can have very different actual data spans (a thinly-traded one can span days, not
+  // hours). Using one ticker's label on the other card's chart was a real bug: it would show
+  // the wrong date range entirely whenever the two tickers' data didn't happen to match.
+  const winnerSessionLabel = formatSessionLabel(winner.intraday.times);
+  const loserSessionLabel = formatSessionLabel(loser.intraday.times);
   const metaLine = formatMetaLine(winner.intraday.times);
 
   const cardX = 70, cardW = W - 140, cardH = 560, cardGap = 30;
@@ -222,14 +234,14 @@ async function generateShortImage(winner, loser) {
     x: cardX, y: winnerY, w: cardW, h: cardH, accent: COLORS.winner, accentFill: COLORS.winnerFill,
     tagLabel: "Winner", ticker: winner.symbol, pctChange: winner.pctChange,
     openPrice: formatMoney(winner.intraday.closes[0]), nowPrice: formatMoney(winner.price),
-    closes: winner.intraday.closes, timeframe: sessionLabel, volumeSurgeRatio: winner.volumeSurgeRatio
+    closes: winner.intraday.closes, timeframe: winnerSessionLabel, volumeSurgeRatio: winner.volumeSurgeRatio
   })}
 
   ${cardSvg({
     x: cardX, y: loserY, w: cardW, h: cardH, accent: COLORS.loser, accentFill: COLORS.loserFill,
     tagLabel: "Loser", ticker: loser.symbol, pctChange: loser.pctChange,
     openPrice: formatMoney(loser.intraday.closes[0]), nowPrice: formatMoney(loser.price),
-    closes: loser.intraday.closes, timeframe: sessionLabel, volumeSurgeRatio: loser.volumeSurgeRatio
+    closes: loser.intraday.closes, timeframe: loserSessionLabel, volumeSurgeRatio: loser.volumeSurgeRatio
   })}
 
   <rect x="${W / 2 - 230}" y="1610" width="460" height="90" rx="45" fill="${COLORS.cta}"/>
