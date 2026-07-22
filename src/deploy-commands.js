@@ -2,12 +2,21 @@
 //   npm run deploy-commands
 
 require("dotenv").config();
-const { REST, Routes, SlashCommandBuilder } = require("discord.js");
+const { REST, Routes, SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+
+// Discord only lets a command be restricted as a whole -- there's no per-subcommand permission
+// API. Commands that are entirely "change server config" (no read-only subcommand mixed in) get
+// this at the top level. /alerts and /portfolio mix a read-only subcommand (history, status)
+// with state-changing ones (on/off/digest-*, start/reset) -- those two stay open here and get an
+// in-code check instead (see requireManageGuild in index.js), so the read-only half stays usable
+// by everyone while the rest is still gated.
+const MANAGE_GUILD_ONLY = [PermissionFlagsBits.ManageGuild];
 
 const commands = [
   new SlashCommandBuilder()
     .setName("watch")
     .setDescription("Manage this server's scanner watchlist")
+    .setDefaultMemberPermissions(MANAGE_GUILD_ONLY)
     .addSubcommand(sc =>
       sc.setName("add").setDescription("Add one or more tickers/crypto pairs to the watchlist")
         .addStringOption(o => o.setName("ticker").setDescription("e.g. AAPL, or BTC/USD -- comma or space separated for multiple, up to 50").setRequired(true))
@@ -30,6 +39,7 @@ const commands = [
   new SlashCommandBuilder()
     .setName("autoscan")
     .setDescription("Configure automatic recurring scans")
+    .setDefaultMemberPermissions(MANAGE_GUILD_ONLY)
     .addSubcommand(sc =>
       sc.setName("on").setDescription("Turn on auto-scan")
         .addChannelOption(o => o.setName("channel").setDescription("Channel to post results in").setRequired(true))
@@ -63,6 +73,7 @@ const commands = [
   new SlashCommandBuilder()
     .setName("autobuild")
     .setDescription("Automatically rebuild the watchlist from the biggest potential movers on a recurring schedule")
+    .setDefaultMemberPermissions(MANAGE_GUILD_ONLY)
     .addSubcommand(sc =>
       sc.setName("on").setDescription("Turn on scheduled autobuild")
         .addChannelOption(o => o.setName("channel").setDescription("Channel to post results in").setRequired(true))
@@ -74,6 +85,7 @@ const commands = [
   new SlashCommandBuilder()
     .setName("shorts")
     .setDescription("Automatic daily YouTube Shorts assets: today's biggest small/mid-cap crypto winner & loser")
+    .setDefaultMemberPermissions(MANAGE_GUILD_ONLY)
     .addSubcommand(sc =>
       sc.setName("on").setDescription("Turn on the daily Shorts drop (4pm and 8pm ET)")
         .addChannelOption(o => o.setName("channel").setDescription("Channel to post both daily drops in").setRequired(true))
@@ -84,6 +96,7 @@ const commands = [
   new SlashCommandBuilder()
     .setName("discover")
     .setDescription("Scans the crypto pool and alerts when RSI/MACD/EMA scoring and ADX trend line up into a fresh Buy")
+    .setDefaultMemberPermissions(MANAGE_GUILD_ONLY)
     .addSubcommand(sc =>
       sc.setName("on").setDescription("Turn on recurring Discover scans")
         .addChannelOption(o => o.setName("channel").setDescription("Channel to post qualifying signals in").setRequired(true))
@@ -95,6 +108,7 @@ const commands = [
   new SlashCommandBuilder()
     .setName("degen")
     .setDescription("HIGH RISK: alerts on new Solana pairs passing a liquidity/market-cap/buy-pressure + RugCheck risk screen (unvalidated)")
+    .setDefaultMemberPermissions(MANAGE_GUILD_ONLY)
     .addSubcommand(sc =>
       sc.setName("on").setDescription("Turn on recurring Degen scans")
         .addChannelOption(o => o.setName("channel").setDescription("Channel to post qualifying pairs in").setRequired(true))

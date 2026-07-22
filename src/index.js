@@ -1,5 +1,5 @@
 require("dotenv").config();
-const { Client, GatewayIntentBits, Events, AttachmentBuilder } = require("discord.js");
+const { Client, GatewayIntentBits, Events, AttachmentBuilder, PermissionFlagsBits } = require("discord.js");
 
 const {
   analyze, backtest, dailyReturns, selectDiversified
@@ -47,6 +47,21 @@ function formatTickerList(tickers) {
     shown++;
   }
   return `${out} (+${tickers.length - shown} more)`;
+}
+
+// /alerts and /portfolio each mix a read-only subcommand (history, status) with state-changing
+// ones (on/off/digest-*, start/reset). Discord's own command permission system only restricts a
+// whole command, not individual subcommands, so those two commands stay open at the top level
+// (see deploy-commands.js) and call this instead for just the subcommands that actually change
+// something. Replies and returns false if the caller lacks Manage Server; caller should `break`
+// on false.
+async function requireManageGuild(interaction) {
+  if (interaction.member?.permissions?.has(PermissionFlagsBits.ManageGuild)) return true;
+  await interaction.reply({
+    content: "You need the **Manage Server** permission to change this -- ask a server admin/mod.",
+    ephemeral: true
+  });
+  return false;
 }
 
 async function runScan(guildId) {
@@ -605,6 +620,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       case "alerts": {
         const sub = interaction.options.getSubcommand();
+        if (sub !== "history" && !(await requireManageGuild(interaction))) break;
         if (sub === "on") {
           const guild = watchlist.getGuild(interaction.guildId);
           const minMinutes = minSustainableInterval(guild.tickers.length);
@@ -810,6 +826,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       case "portfolio": {
         const sub = interaction.options.getSubcommand();
+        if (sub !== "status" && !(await requireManageGuild(interaction))) break;
         if (sub === "start") {
           if (watchlist.getPortfolio(interaction.guildId)) {
             await interaction.reply({

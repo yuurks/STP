@@ -100,6 +100,17 @@ exercised by hand in a real server.
 
 ## Commands
 
+Anyone in the server can run the read-only ones (`/scan`, `/backtest`, `/watch list`,
+`/alerts history`, `/portfolio status`). Everything that changes server-wide config or state --
+`/watch add/remove/clear/autobuild`, `/autoscan`, `/autobuild`, `/shorts`, `/discover`, `/degen`,
+`/alerts on/off/digest-*`, `/portfolio start/reset` -- requires the **Manage Server** Discord
+permission. Discord only restricts a whole command, not individual subcommands, which is why
+`/watch` is entirely Manage-Server-gated (its own `list` included) while `/alerts` and
+`/portfolio` stay open at the command level and check permission in code per-subcommand instead
+(`requireManageGuild` in `index.js`) -- the only way to keep `history`/`status` open while
+`on`/`off`/`start`/`reset` stay gated. Adjustable via Discord's own **Server Settings → Integrations**
+if you want a different role than whoever already has Manage Server.
+
 | Command | What it does |
 |---|---|
 | `/watch add ticker:BTC/USD` | Add tickers to this server's watchlist (crypto pairs like `BTC/USD` or `BTC-USD`; also accepts plain stock tickers if you ever want one, just not what the bot's built around anymore), multiple at once, comma or space separated (up to 50) |
