@@ -103,16 +103,19 @@ function formatDexScreenerVolume(usd) {
 // Brand-new Solana pairs from DexScreener -- momentum/liquidity/buy-pressure, not RSI/MACD/ADX
 // (impossible here, no historical data exists -- see src/lib/degen.js). Meaningfully higher risk
 // than every other alert this bot sends: rug pulls, honeypot contracts, and wash-traded volume
-// are common in this exact category, and nothing here can detect any of those in advance. The
-// risk warning is in the title and footer deliberately, not just buried in a caveat line.
+// are common in this exact category. A RugCheck-based screen (mint/freeze authority, insider
+// clustering, holder concentration) has already been applied by the time a candidate reaches
+// this embed -- it reduces exposure to known patterns, it does not guarantee anything. The risk
+// warning is in the title and footer deliberately, not just buried in a caveat line.
 function degenEmbed(candidates) {
   const embed = new EmbedBuilder()
     .setTitle("⚠️ Degen — New Solana Pairs (High Risk)")
     .setColor(0xe0433d)
     .setThumbnail("attachment://logo.png")
     .setFooter({
-      text: "UNVALIDATED, HIGH RISK: brand-new pairs can be rugged, honeypotted, or wash-traded. " +
-        "Liquidity/buy-pressure filters, not a safety check. This can never be backtested -- there's no history to replay. Not financial advice."
+      text: "UNVALIDATED, HIGH RISK: passed a liquidity/buy-pressure/market-cap filter and a " +
+        "RugCheck-based risk screen -- neither is a guarantee against rugs, honeypots, or wash-traded volume. " +
+        "This can never be backtested -- there's no history to replay. Not financial advice."
     })
     .setTimestamp();
 
@@ -121,10 +124,16 @@ function degenEmbed(candidates) {
     const h1 = pair.txns?.h1 || { buys: 0, sells: 0 };
     const ratio = h1.sells > 0 ? (h1.buys / h1.sells).toFixed(1) : "∞";
     const ageHours = pair.pairCreatedAt ? ((Date.now() - pair.pairCreatedAt) / 3600000).toFixed(1) : "?";
+    const report = pair.riskReport;
+    const riskLine = report
+      ? `\nRisk screen: score ${report.score_normalised ?? report.score ?? "?"}/100 · ` +
+        `top holder ${(report.topHolders?.[0]?.pct || 0).toFixed(1)}% · mint/freeze renounced`
+      : "";
     embed.addFields({
       name: `${symbol} · ${formatMoney(parseFloat(pair.priceUsd) || 0)}`,
       value: `Liquidity: ${formatDexScreenerVolume(pair.liquidity?.usd || 0)} · ` +
-        `1h buys/sells: ${h1.buys}/${h1.sells} (${ratio}×) · Age: ${ageHours}h\n` +
+        `Market cap: ${formatDexScreenerVolume(pair.marketCap || 0)} · ` +
+        `1h buys/sells: ${h1.buys}/${h1.sells} (${ratio}×) · Age: ${ageHours}h${riskLine}\n` +
         `[View on DexScreener](${pair.url})`,
       inline: false
     });

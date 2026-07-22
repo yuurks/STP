@@ -258,20 +258,31 @@ exercised by hand in a real server.
   compete with any other feature's quota) -- but that API only exposes a live snapshot (current
   price, liquidity, and buy/sell counts over rolling 5m/1h/6h/24h windows), never historical
   candles. So `/degen` can't run the RSI/MACD/ADX engine at all -- it's a different model
-  entirely: liquidity (≥$5K, `MIN_LIQUIDITY_USD` in `src/lib/degen.js`) + real buy pressure
-  (≥2x buys/sells over the last hour, with a minimum trade count so the ratio isn't computed
-  from a handful of trades) + pair age under 48h. It scans DexScreener's rolling feed of
+  entirely: liquidity (≥$5K), market cap (≥$50K), and real buy pressure (≥2x buys/sells over the
+  last hour, with a minimum trade count so the ratio isn't computed from a handful of trades),
+  over a pair age under 48h (all in `src/lib/degen.js`). It scans DexScreener's rolling feed of
   newly-profiled Solana tokens (`/token-profiles/latest/v1`, filtered client-side to
   `chainId === "solana"`) -- a feed of the last ~15-30 minutes of activity, not an archive, and
   only tokens whose creator submitted profile metadata, not literally every pair that launches.
   **This can never be backtested** -- `/backtest` works by replaying real history, and there is
   no history for a token that's existed for an hour, so this is permanently unvalidated by
-  design, more so than anything else in this bot. And unlike everything else here, this touches
-  a category where **rug pulls, honeypot contracts (the contract blocks selling), and
-  wash-traded fake volume are common** -- the liquidity and buy-pressure filters catch some
-  obvious noise, they are not a safety check and cannot detect any of those in advance. Every
-  alert links to the pair's DexScreener page so you can look at the actual chart/holders
-  yourself before doing anything -- treat that as mandatory, not optional.
+  design, more so than anything else in this bot.
+- **`/degen`'s risk screen reduces exposure to known rug-pull patterns -- it cannot guarantee a
+  token isn't a scam**: candidates that clear the liquidity/market-cap/buy-pressure filters above
+  get one more check via [RugCheck's free API](https://api.rugcheck.xyz/swagger/index.html) (no
+  key, 3 req/sec, only called for the few candidates that already look promising, so this stays
+  cheap): reject if RugCheck has already flagged the token as rugged, if mint or freeze authority
+  wasn't renounced (either lets the deployer inflate supply or freeze holder accounts), if
+  RugCheck detected a connected/insider wallet cluster, if RugCheck's own 0-100 risk score exceeds
+  50 (`MAX_RUGCHECK_SCORE` -- a judgment call, not a documented threshold; legitimate tokens
+  checked during development scored in the low single digits), or if any single wallet holds more
+  than 20% of supply (`MAX_TOP_HOLDER_PCT` -- catches concentration RugCheck's own score doesn't
+  always flag: a real copycat token found during testing held 42% in one wallet and still scored
+  as "safe"). Verified working end-to-end against live data: a token that passed every DexScreener
+  filter got correctly rejected by this screen for a detected insider wallet cluster. None of
+  this is a safety guarantee -- a coordinated team can pass every check here and still dump on
+  holders. Every alert links to the pair's DexScreener page so you can look at the actual
+  chart/holders yourself before doing anything -- treat that as mandatory, not optional.
 - **No real order execution**: `/portfolio` simulates trading (see below), but it is not
   connected to any brokerage and never risks real money. Turning this into real automated
   trades would require a brokerage API (e.g. Alpaca, Interactive Brokers), real capital at risk

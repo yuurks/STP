@@ -94,7 +94,7 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("degen")
-    .setDescription("HIGH RISK: alerts on brand-new Solana pairs with real liquidity + buy pressure (DexScreener, unvalidated)")
+    .setDescription("HIGH RISK: alerts on new Solana pairs passing a liquidity/market-cap/buy-pressure + RugCheck risk screen (unvalidated)")
     .addSubcommand(sc =>
       sc.setName("on").setDescription("Turn on recurring Degen scans")
         .addChannelOption(o => o.setName("channel").setDescription("Channel to post qualifying pairs in").setRequired(true))

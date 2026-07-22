@@ -15,7 +15,8 @@
       "Bash(node scripts/generate-short.js)",
       "Bash(node --check src/lib/shorts.js)",
       "Bash(node --check scripts/generate-short.js)",
-      "Bash(npm test *)"
+      "Bash(npm test *)",
+      "Bash(curl -s \"https://api.rugcheck.xyz/v1/tokens/7qpQ2qUhmk82jwERj3559xnm13q4Mi48sQSg1iPQpump/report\")"
     ]
   }
 }

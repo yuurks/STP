@@ -785,10 +785,13 @@ client.on(Events.InteractionCreate, async interaction => {
           watchlist.setDegenSchedule(interaction.guildId, { channelId: channel.id, intervalMinutes, lastRun: null });
           await interaction.reply(
             `Degen on: every ${intervalMinutes} min, scanning DexScreener's newest Solana pairs for real liquidity ` +
-            `(≥$${degen.MIN_LIQUIDITY_USD.toLocaleString()}) and real buy pressure (≥${degen.MIN_BUY_SELL_RATIO}x buys/sells, ` +
-            `${degen.MIN_H1_TXNS}+ trades/hr) -- posting to ${channel} only when one qualifies. ` +
-            "**High risk, unvalidated**: brand-new pairs can be rugged, honeypotted, or wash-traded, and this can never be " +
-            "backtested (no historical data exists for a token that's existed for hours). Not a prediction -- do your own research."
+            `(≥$${degen.MIN_LIQUIDITY_USD.toLocaleString()}), market cap (≥$${degen.MIN_MARKET_CAP_USD.toLocaleString()}), and real buy ` +
+            `pressure (≥${degen.MIN_BUY_SELL_RATIO}x buys/sells, ${degen.MIN_H1_TXNS}+ trades/hr), then screened against known rug-pull ` +
+            `patterns via RugCheck (mint/freeze authority, insider wallet clustering, top-holder concentration >${degen.MAX_TOP_HOLDER_PCT}%) ` +
+            `-- posting to ${channel} only when one clears all of it. ` +
+            "**High risk, unvalidated**: the risk screen reduces exposure to known patterns, it does not guarantee anything -- brand-new " +
+            "pairs can still be rugged, honeypotted, or wash-traded, and this can never be backtested (no historical data exists for a " +
+            "token that's existed for hours). Not a prediction -- do your own research."
           );
         } else if (sub === "off") {
           watchlist.setDegenSchedule(interaction.guildId, null);
