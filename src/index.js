@@ -266,6 +266,13 @@ async function runShortsDrop(channel) {
 // check belongs. Edge-triggered like /alerts: only fires on a fresh transition into Buy/Strong
 // Buy for that symbol, not every run it stays there.
 const DISCOVER_SAMPLE_SIZE = 50;
+// Same protection minSustainableInterval() gives autoscan/alerts, just in hours against a flat
+// sample size instead of minutes against watchlist size -- without this, /discover on could be
+// configured with an interval_hours low enough to burn the entire daily quota by itself (e.g.
+// interval_hours:1 at 50 candidates/scan = 1200 requests/day, 400 over the 800/day cap alone).
+function minDiscoverIntervalHours() {
+  return Math.max(1, Math.ceil((DISCOVER_SAMPLE_SIZE * 24) / REQUESTS_PER_DAY_LIMIT));
+}
 async function runDiscoverScan(guildId, channel) {
   const pool = universe.loadUniverse("crypto");
   const candidates = universe.sample(pool, DISCOVER_SAMPLE_SIZE);
@@ -704,8 +711,17 @@ client.on(Events.InteractionCreate, async interaction => {
       case "discover": {
         const sub = interaction.options.getSubcommand();
         if (sub === "on") {
+          const minHours = minDiscoverIntervalHours();
+          const requested = interaction.options.getInteger("interval_hours");
+          const intervalHours = requested || 4;
+          if (intervalHours < minHours) {
+            await interaction.reply({
+              content: `At ${DISCOVER_SAMPLE_SIZE} candidates per scan, the fastest sustainable interval on Twelve Data's free tier is ${minHours}h (any faster risks running out of your daily request quota by itself). Try \`interval_hours:${minHours}\`.`,
+              ephemeral: true
+            });
+            break;
+          }
           const channel = interaction.options.getChannel("channel");
-          const intervalHours = Math.max(1, interaction.options.getInteger("interval_hours") || 4);
           watchlist.setDiscoverSchedule(interaction.guildId, { channelId: channel.id, intervalHours, lastRun: null });
           await interaction.reply(
             `Discover on: every ${intervalHours}h, scanning ${DISCOVER_SAMPLE_SIZE} random crypto candidates for a fresh ` +

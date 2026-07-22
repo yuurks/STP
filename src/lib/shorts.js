@@ -148,7 +148,10 @@ function chartPaths(closes, x, y, w, h) {
   const pad = 6;
   const min = Math.min(...closes), max = Math.max(...closes);
   const range = (max - min) || 1;
-  const stepX = (w - pad * 2) / (closes.length - 1);
+  // closes.length - 1 divides into stepX -- guard the single-bar case (a thin/newly-listed
+  // small-cap coin could plausibly return only one intraday bar) so this produces a flat line
+  // at x=pad instead of NaN coordinates from a divide-by-zero.
+  const stepX = closes.length > 1 ? (w - pad * 2) / (closes.length - 1) : 0;
   const points = closes.map((v, i) => [
     x + pad + i * stepX,
     y + pad + (h - pad * 2) * (1 - (v - min) / range)

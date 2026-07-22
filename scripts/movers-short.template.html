@@ -292,7 +292,9 @@
       const w = 300, h = 90, pad = 4;
       const min = Math.min(...closes), max = Math.max(...closes);
       const range = (max - min) || 1;
-      const stepX = (w - pad * 2) / (closes.length - 1);
+      // Guard the single-bar case (divide-by-zero -> NaN coordinates) the same way the
+      // server-side chartPaths() in src/lib/shorts.js does.
+      const stepX = closes.length > 1 ? (w - pad * 2) / (closes.length - 1) : 0;
       const points = closes.map((v, i) => {
         const x = pad + i * stepX;
         const y = pad + (h - pad * 2) * (1 - (v - min) / range);

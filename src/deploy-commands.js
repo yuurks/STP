@@ -83,11 +83,11 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("discover")
-    .setDescription("Scans the crypto pool and alerts when RSI/MACD/ADX trend + a real volume surge line up into a Buy")
+    .setDescription("Scans the crypto pool and alerts when RSI/MACD/EMA scoring and ADX trend line up into a fresh Buy")
     .addSubcommand(sc =>
       sc.setName("on").setDescription("Turn on recurring Discover scans")
         .addChannelOption(o => o.setName("channel").setDescription("Channel to post qualifying signals in").setRequired(true))
-        .addIntegerOption(o => o.setName("interval_hours").setDescription("How often to scan, in hours, min 1 (default 4)").setRequired(false))
+        .addIntegerOption(o => o.setName("interval_hours").setDescription("How often to scan, in hours (default 4; rejected if too fast for the daily request budget)").setRequired(false))
     )
     .addSubcommand(sc => sc.setName("off").setDescription("Turn off recurring Discover scans"))
     .addSubcommand(sc => sc.setName("now").setDescription("Run a Discover scan right now instead of waiting for the schedule")),
