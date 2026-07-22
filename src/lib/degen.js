@@ -22,6 +22,14 @@ const MIN_BUY_SELL_RATIO = 2.0;
 // Minimum h1 buy+sell count so the ratio isn't computed from a handful of trades (3 buys vs 1
 // sell is a 3x ratio and means nothing).
 const MIN_H1_TXNS = 20;
+// A real gap this filter had until a live alert fired on a coin already rolling over (confirmed
+// against real DexScreener data: it had more buy transactions than sell transactions in the hour
+// leading up to the check, while the price itself was already reversing hard). Transaction COUNT
+// favoring buys doesn't mean the PRICE went up -- many small buyers can still lose to fewer,
+// bigger sellers. Require confirmed price appreciation over the hour, and reject anything already
+// dropping in just the last 5 minutes even if the hour overall still looks fine.
+const MIN_H1_PRICE_CHANGE_PCT = 5;
+const MAX_M5_PRICE_DROP_PCT = -5;
 // "New," not "been trading for a month" -- pairCreatedAt is a real on-chain timestamp.
 const MAX_PAIR_AGE_HOURS = 48;
 // RugCheck's own 0-100 risk score (higher = riskier). A judgment call, not a documented cutoff --
@@ -50,6 +58,11 @@ function qualifies(pair) {
   if (h1.buys + h1.sells < MIN_H1_TXNS) return false;
   const ratio = h1.sells > 0 ? h1.buys / h1.sells : (h1.buys > 0 ? Infinity : 0);
   if (ratio < MIN_BUY_SELL_RATIO) return false;
+
+  const h1Change = pair.priceChange?.h1;
+  if (h1Change == null || h1Change < MIN_H1_PRICE_CHANGE_PCT) return false;
+  const m5Change = pair.priceChange?.m5;
+  if (m5Change != null && m5Change < MAX_M5_PRICE_DROP_PCT) return false;
 
   if (pair.pairCreatedAt) {
     const ageHours = (Date.now() - pair.pairCreatedAt) / (1000 * 60 * 60);
@@ -128,5 +141,6 @@ async function findDegenCandidates(alertedAddresses) {
 module.exports = {
   findDegenCandidates,
   MIN_LIQUIDITY_USD, MIN_MARKET_CAP_USD, MIN_BUY_SELL_RATIO, MIN_H1_TXNS, MAX_PAIR_AGE_HOURS,
+  MIN_H1_PRICE_CHANGE_PCT, MAX_M5_PRICE_DROP_PCT,
   MAX_RUGCHECK_SCORE, MAX_TOP_HOLDER_PCT
 };

@@ -134,11 +134,16 @@ function degenEmbed(candidates) {
       ? `\nRisk screen: score ${report.score_normalised ?? report.score ?? "?"}/100 · ` +
         `top holder ${(report.topHolders?.[0]?.pct || 0).toFixed(1)}% · ${authorityLabel}`
       : "";
+    const h1Change = pair.priceChange?.h1;
+    const m5Change = pair.priceChange?.m5;
+    const changeLine = h1Change != null
+      ? ` · 1h: ${h1Change >= 0 ? "+" : ""}${h1Change.toFixed(1)}% · 5m: ${m5Change != null ? (m5Change >= 0 ? "+" : "") + m5Change.toFixed(1) + "%" : "?"}`
+      : "";
     embed.addFields({
       name: `${symbol} · ${formatMoney(parseFloat(pair.priceUsd) || 0)}`,
       value: `Liquidity: ${formatDexScreenerVolume(pair.liquidity?.usd || 0)} · ` +
         `Market cap: ${formatDexScreenerVolume(pair.marketCap || 0)} · ` +
-        `1h buys/sells: ${h1.buys}/${h1.sells} (${ratio}×) · Age: ${ageHours}h${riskLine}\n` +
+        `1h buys/sells: ${h1.buys}/${h1.sells} (${ratio}×)${changeLine} · Age: ${ageHours}h${riskLine}\n` +
         `[View on DexScreener](${pair.url})`,
       inline: false
     });
