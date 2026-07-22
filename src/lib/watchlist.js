@@ -186,6 +186,43 @@ function saveVerdicts(guildId, verdicts) {
   saveAll(all);
 }
 
+// /discover scans the crypto candidate pool (not the watchlist) and needs its own verdict-
+// tracking bucket, separate from the watchlist's lastVerdicts -- same symbol could appear in
+// both scopes, and mixing them would make a manual /scan's verdict suppress a /discover alert
+// (or vice versa) for reasons that wouldn't make sense to someone reading the alert.
+function getDiscoverVerdicts(guildId) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  return guild.discoverVerdicts || {};
+}
+
+function saveDiscoverVerdicts(guildId, verdicts) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.discoverVerdicts = { ...(guild.discoverVerdicts || {}), ...verdicts };
+  saveAll(all);
+}
+
+function setDiscoverSchedule(guildId, config) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.discoverSchedule = config;
+  saveAll(all);
+  return guild.discoverSchedule;
+}
+
+function markDiscoverRun(guildId, timestamp) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  if (guild.discoverSchedule) guild.discoverSchedule.lastRun = timestamp;
+  saveAll(all);
+}
+
+function allGuildsWithDiscoverSchedule() {
+  const all = loadAll();
+  return Object.entries(all).filter(([, g]) => g.discoverSchedule);
+}
+
 // Every fired alert gets logged here so /alerts history can check back later on what the price
 // actually did -- real forward performance, not a simulation. Capped so this can't grow forever.
 const MAX_ALERT_HISTORY = 200;
@@ -289,6 +326,8 @@ module.exports = {
   logAlert, getAlertHistory,
   setAlertDigestSchedule, markAlertDigestRun, allGuildsWithAlertDigestSchedule,
   setShortsSchedule, allGuildsWithShortsSchedule, markShortRun,
+  getDiscoverVerdicts, saveDiscoverVerdicts,
+  setDiscoverSchedule, markDiscoverRun, allGuildsWithDiscoverSchedule,
   getPortfolio, startPortfolio, savePortfolio, resetPortfolio,
   normalizeSymbol, isValidTicker
 };

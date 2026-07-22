@@ -8,60 +8,40 @@ const fs = require("fs");
 const path = require("path");
 const sharp = require("sharp");
 const { fetchDailySeries, fetchIntradaySeries } = require("./marketData");
-const { avgDollarVolume } = require("./indicators");
 const universe = require("./universe");
 
 const PACING_MS = 7500; // same as the bot -- stays under Twelve Data's free 8 req/min
 const sleep = ms => new Promise(res => setTimeout(res, ms));
 
-// A coin "bound to intake large amounts of volume" is one already showing unusual volume vs.
-// its OWN recent normal, not one that's already high-volume in absolute terms (that would just
-// bring back majors, the opposite of what a small-cap scan is for). Surge ratio = today's dollar
-// volume / the trailing 20-day average excluding today. >= this ratio is the bar for
-// consideration as winner/loser.
-const MIN_VOLUME_SURGE = 1.3;
-
-// Tiny absolute floor just to keep literally-dead tickers (near-zero baseline volume, where any
-// trade at all produces a huge, meaningless ratio) out of consideration -- much lower than
-// /watch autobuild's $1M, since small/mid caps are expected to be thin in absolute terms.
-const MIN_BASELINE_DOLLAR_VOLUME = 10_000;
-
 // Crypto trades round the clock, so "intraday" means a trailing 24h window: 96 bars at 15min each.
 const INTRADAY_BAR_COUNT = 96;
 
 // Scans a random sample of the given universe (see universe.js for the "kind" options) for the
-// day's single biggest gainer and loser among candidates showing a real volume surge vs. their
-// own recent normal (>= MIN_VOLUME_SURGE), then fetches each one's intraday bars for the chart.
-// Falls back to the best mover regardless of volume only if literally nothing in the sample
-// clears the surge bar, so a run never comes back empty. Same output shape as
-// scripts/find-movers.js's output (data/movers.json), plus a `universeKind` tag.
+// day's single biggest gainer and loser, then fetches each one's intraday bars for the chart.
+// NOT filtered/ranked by volume: Twelve Data doesn't return volume data for crypto pairs
+// (confirmed 2026-07-22 -- the field is absent/zero everywhere tried, not a free-tier gap), so a
+// volume-surge requirement here would silently exclude every candidate, always. This used to
+// carry that filter; it never actually did anything since every candidate's volume reads as 0,
+// so it always fell back to this exact behavior anyway -- just removed the dead code. Same
+// output shape as scripts/find-movers.js's output (data/movers.json), plus a `universeKind` tag.
 async function findMover(universeKind, sampleSize) {
   const pool = universe.loadUniverse(universeKind);
   const candidates = universe.sample(pool, sampleSize);
 
   let winner = null, loser = null;
-  let surgingWinner = null, surgingLoser = null;
   let checked = 0;
 
   for (const symbol of candidates) {
     try {
       const rows = await fetchDailySeries(symbol, 30);
-      if (rows.length >= 3) {
+      if (rows.length >= 2) {
         const last = rows[rows.length - 1];
         const prev = rows[rows.length - 2];
         const pctChange = ((last.close - prev.close) / prev.close) * 100;
-        const todayDollarVolume = last.close * last.volume;
-        const baselineDollarVolume = avgDollarVolume(rows.slice(0, -1));
-        const volumeSurgeRatio = baselineDollarVolume > 0 ? todayDollarVolume / baselineDollarVolume : 0;
-        const entry = { symbol, pctChange, price: last.close, volumeSurgeRatio };
+        const entry = { symbol, pctChange, price: last.close };
 
         if (!winner || pctChange > winner.pctChange) winner = entry;
         if (!loser || pctChange < loser.pctChange) loser = entry;
-
-        if (baselineDollarVolume >= MIN_BASELINE_DOLLAR_VOLUME && volumeSurgeRatio >= MIN_VOLUME_SURGE) {
-          if (!surgingWinner || pctChange > surgingWinner.pctChange) surgingWinner = entry;
-          if (!surgingLoser || pctChange < surgingLoser.pctChange) surgingLoser = entry;
-        }
         checked++;
       }
     } catch (err) {
@@ -69,11 +49,6 @@ async function findMover(universeKind, sampleSize) {
     }
     await sleep(PACING_MS);
   }
-
-  // Prefer the volume-surging pick; only fall back to the unfiltered one if nothing in this
-  // sample cleared the surge bar at all.
-  winner = surgingWinner || winner;
-  loser = surgingLoser || loser;
 
   for (const entry of [winner, loser]) {
     if (!entry) continue;

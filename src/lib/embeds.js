@@ -73,6 +73,26 @@ function alertEmbed(fired) {
   return embed;
 }
 
+function discoverEmbed(fired) {
+  const embed = new EmbedBuilder()
+    .setTitle("🔍 Discover — New Buy Signals")
+    .setColor(0x21c08f)
+    .setThumbnail("attachment://logo.png")
+    .setFooter({ text: "Found in the crypto candidate pool, not your watchlist. Technical pattern signals, not financial advice -- not a prediction, just what qualifies right now." })
+    .setTimestamp();
+
+  fired.forEach(r => {
+    const surgeNote = r.volumeSurgeRatio ? ` · ${r.volumeSurgeRatio.toFixed(1)}× normal volume` : "";
+    embed.addFields({
+      name: `${r.symbol} · $${r.last.close.toFixed(2)} — ${r.verdict}`,
+      value: `Score ${r.score >= 0 ? "+" : ""}${r.score}${surgeNote} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}${stopLossLine(r)}`,
+      inline: false
+    });
+  });
+
+  return embed;
+}
+
 function volatilityEmbed(results) {
   const sorted = [...results].sort((a, b) => b.volatility - a.volatility);
   const embed = new EmbedBuilder()
@@ -215,6 +235,6 @@ function shortsEmbed(winner, loser, label, imageFilename) {
 }
 
 module.exports = {
-  scanEmbed, alertEmbed, volatilityEmbed, backtestEmbed, alertHistoryEmbed, portfolioEmbed,
+  scanEmbed, alertEmbed, discoverEmbed, volatilityEmbed, backtestEmbed, alertHistoryEmbed, portfolioEmbed,
   shortsEmbed, logoAttachment, VERDICT_COLOR
 };

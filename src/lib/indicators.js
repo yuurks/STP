@@ -305,11 +305,15 @@ function analyze(rows) {
   const adxData = adx(rows, 14);
   const avgVolumeData = sma(rows.map(r => r.volume), 20);
   const filtered = applyConfidenceFilter(raw, adxData[n], rows[n].volume, avgVolumeData[n]);
+  // Today's volume vs. its own 20-day average -- a ratio, not just the above/below-average
+  // binary the confidence filter uses, so callers who care about a real surge (not just "any
+  // above-average day") have something to threshold on.
+  const volumeSurgeRatio = avgVolumeData[n] > 0 ? rows[n].volume / avgVolumeData[n] : null;
 
   return {
     rows: enriched, ...filtered, last: enriched[n],
     volatility: volatility(closes), gap: findUnfilledGap(rows),
-    adx: adxData[n], atr: atr(rows, 14)[n]
+    adx: adxData[n], atr: atr(rows, 14)[n], volumeSurgeRatio
   };
 }
 

@@ -121,9 +121,12 @@ exercised by hand in a real server.
 | `/portfolio start starting_cash:10000` | Start a simulated paper-trading portfolio (no real money) that follows this bot's own Buy/Sell signals |
 | `/portfolio status` | Show current cash, open positions with live unrealized P&L, total return, and recent closed trades |
 | `/portfolio reset` | Wipe the paper portfolio and start over |
-| `/shorts on channel:#...` | Turn on the daily YouTube Shorts content drop — scans small/mid-cap crypto for today's biggest winner/loser showing a real volume surge, posts a ready-to-use image, twice a day (4:00pm and 8:00pm ET) |
+| `/shorts on channel:#...` | Turn on the daily YouTube Shorts content drop — scans small/mid-cap crypto for today's single biggest winner/loser by % change, posts a ready-to-use image, twice a day (4:00pm and 8:00pm ET) |
 | `/shorts off` | Turn off the daily Shorts drop |
 | `/shorts now` | Run a Shorts scan immediately instead of waiting for the schedule |
+| `/discover on channel:#...` | Turn on recurring scans of the crypto pool for a fresh Buy/Strong Buy (RSI/MACD/EMA scoring + confirmed ADX trend) — posts an alert only when one qualifies, so you can look and decide, default every 4h |
+| `/discover off` | Turn off recurring Discover scans |
+| `/discover now` | Run a Discover scan immediately instead of waiting for the schedule |
 
 ## Notes and honest limitations
 
@@ -153,10 +156,11 @@ exercised by hand in a real server.
   -- the standard deviation of daily % price changes over the fetched window -- a measure of how
   much a ticker moves, not a prediction of which direction it'll move next. Candidates with a
   confirmed weak/no trend (ADX < 15) are excluded, since pure volatility with nothing behind it
-  is as often a spike about to mean-revert as it is a real opportunity. Thin/illiquid candidates
-  are also excluded (avg. dollar volume -- price × volume -- under $1M/day), since a handful of
-  trades moving a barely-traded ticker's price isn't the same thing as a real opportunity, even
-  if it shows up as "volatile." Final selection uses real correlation-based diversification:
+  is as often a spike about to mean-revert as it is a real opportunity. There's deliberately no
+  liquidity/thin-trading filter here: Twelve Data doesn't return volume data for crypto pairs at
+  all (see the "no crypto volume data" note below), so a dollar-volume floor would silently
+  exclude every single candidate rather than actually filtering anything. Final selection uses
+  real correlation-based diversification:
   candidates are ranked by volatility, but a candidate gets skipped if its recent daily returns
   are too *positively* correlated (> 0.7) with something already picked -- strong negative
   correlation is left alone, since two assets that move opposite each other are good
@@ -177,13 +181,17 @@ exercised by hand in a real server.
   prior day's high/low with no trading in between. Shown as how far price still has to move,
   and in which direction, to trade back through that level. This is a purely mechanical
   reading of the candle data, not a prediction that the gap will actually get filled.
-- **Signal confidence filter**: a Buy/Sell verdict only survives if it's backed by both a real
-  trend (ADX >= 20, Wilder's own threshold for "trending" vs. "range-bound") and above-average
-  volume (20-day average). Otherwise it's downgraded to Neutral with a note explaining why, so
-  `/alerts` stays quiet on crossovers that fire during a choppy, low-conviction market. This
-  trades quantity for quality — expect noticeably fewer Buy/Sell verdicts than before. It does
-  **not** make signals more likely to be profitable, only less likely to be a false positive
-  from a well-known failure mode (crossover indicators whipsawing in sideways markets).
+- **Signal confidence filter**: a Buy/Sell verdict only survives if it's backed by a real trend
+  (ADX >= 20, Wilder's own threshold for "trending" vs. "range-bound"). Otherwise it's downgraded
+  to Neutral with a note explaining why, so `/alerts` stays quiet on crossovers that fire during a
+  choppy, low-conviction market. This trades quantity for quality — expect noticeably fewer
+  Buy/Sell verdicts than before. It does **not** make signals more likely to be profitable, only
+  less likely to be a false positive from a well-known failure mode (crossover indicators
+  whipsawing in sideways markets). The filter also has an above-average-volume check in its code
+  (`applyConfidenceFilter` in `indicators.js`), but it's a silent no-op for every symbol this bot
+  actually scans now: Twelve Data returns 0 for crypto volume, and 0 is never less than 0, so the
+  check can never trigger. It would still work correctly if you manually watch a stock ticker
+  (Twelve Data does provide real volume there) -- see "No crypto volume data" below.
 - **Golden Cross / Death Cross**: the 50-day SMA crossing the 200-day SMA, a specifically-named,
   widely-watched longer-horizon signal distinct from the faster 20/50 SMA pair already used
   elsewhere in the score. Needs ~200 days of history to ever fire (the default fetch window was
@@ -219,12 +227,26 @@ exercised by hand in a real server.
   tier doesn't expose one). Honest limitation: Twelve Data's free crypto coverage thins out fast
   past the majors, so a real chunk of each sample (often a third or more) returns no data at all
   and gets skipped -- the "checked" count will run noticeably lower than the candidate count.
-- **`/shorts` prioritizes volume *surges*, not high absolute volume**: instead of a fixed
-  liquidity floor (which would just exclude small caps entirely, the opposite of the point), a
-  candidate needs today's dollar volume at least 1.3x its own trailing 20-day average to be
-  considered "the" winner/loser -- the idea being a small-cap coin suddenly trading well above its
-  own normal is a real signal of interest building, not just noise. Falls back to the best mover
-  regardless of volume only if nothing in that run's sample clears the surge bar.
+- **No crypto volume data**: confirmed 2026-07-22, across `time_series`, `quote`, and
+  `time_series` with an explicit `exchange` param -- Twelve Data simply does not return volume
+  for crypto pairs. Not a free-tier restriction; the field is absent or reads 0 everywhere tried.
+  This is a real limitation, not a design choice: `/shorts` originally tried to prioritize a
+  volume *surge* (today's volume vs. a coin's own recent normal) when picking the winner/loser,
+  and `/watch autobuild` originally excluded thin-volume candidates below a dollar-volume floor --
+  both were silently broken by this (the surge check always read as 0, and the liquidity floor
+  excluded every single candidate, every run) until caught and removed. `/discover` (below) was
+  designed and built with a volume-surge requirement too, cut before ever shipping once this was
+  confirmed. If a real crypto volume data source ever gets integrated (e.g. CoinGecko has one),
+  all three are the places to revisit.
+- **`/discover` alerts on trend + score alone, not volume**: scans a sample of the crypto pool
+  (default 50 candidates, configurable interval, default every 4h) using the same RSI/MACD/EMA
+  scoring and ADX trend confirmation `/scan` and `/alerts` use, and posts an alert the first time
+  a symbol transitions into Buy/Strong Buy (edge-triggered, like `/alerts` -- won't re-alert every
+  run it stays there). This flags coins worth a manual look, not a prediction of future profit --
+  see the "No crypto volume data" note above for why volume isn't part of the check despite being
+  originally requested. Tracks verdicts in its own storage bucket, separate from the watchlist's,
+  so a `/scan` on a symbol that's also on your watchlist doesn't suppress a `/discover` alert on
+  it (or vice versa).
 - **No real order execution**: `/portfolio` simulates trading (see below), but it is not
   connected to any brokerage and never risks real money. Turning this into real automated
   trades would require a brokerage API (e.g. Alpaca, Interactive Brokers), real capital at risk

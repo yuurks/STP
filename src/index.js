@@ -2,7 +2,7 @@ require("dotenv").config();
 const { Client, GatewayIntentBits, Events, AttachmentBuilder } = require("discord.js");
 
 const {
-  analyze, backtest, dailyReturns, avgDollarVolume, selectDiversified
+  analyze, backtest, dailyReturns, selectDiversified
 } = require("./lib/indicators");
 const { fetchDailySeries } = require("./lib/marketData");
 const watchlist = require("./lib/watchlist");
@@ -10,7 +10,7 @@ const universe = require("./lib/universe");
 const portfolioLib = require("./lib/portfolio");
 const shorts = require("./lib/shorts");
 const {
-  scanEmbed, alertEmbed, volatilityEmbed, backtestEmbed, alertHistoryEmbed, portfolioEmbed, shortsEmbed, logoAttachment
+  scanEmbed, alertEmbed, discoverEmbed, volatilityEmbed, backtestEmbed, alertHistoryEmbed, portfolioEmbed, shortsEmbed, logoAttachment
 } = require("./lib/embeds");
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -86,9 +86,14 @@ function updatePortfolio(guildId, results) {
 // pacing this takes well over the 15-minute window Discord gives an interaction to respond, so
 // progress/results are posted as normal channel messages instead of interaction replies.
 const NO_TREND_ADX = 15;
-// Rough dollar-liquidity floor (price * volume, averaged over 20 days) -- screens out names
+// Dollar-liquidity floor (price * volume, averaged over 20 days) -- would screen out names
 // where a handful of trades can swing the price and produce misleadingly high "volatility" that
-// has nothing to do with a real trading opportunity.
+// has nothing to do with a real trading opportunity. NOT currently applied to crypto: confirmed
+// (2026-07-22, via time_series, quote, and time_series with an explicit exchange param) that
+// Twelve Data simply doesn't return volume for crypto pairs -- not a free-tier gap, the field is
+// absent/zero everywhere tried. Left defined (unused by runAutobuild below) in case a real
+// volume source ever gets wired in; do not resurrect a >= MIN_DOLLAR_VOLUME check against crypto
+// rows without one, it will silently exclude every candidate, every time.
 const MIN_DOLLAR_VOLUME = 1_000_000;
 // How similar (correlated) two picks' recent daily returns are allowed to be before the lower-
 // volatility one gets skipped in favor of something that actually moves independently.
@@ -117,14 +122,10 @@ async function runAutobuild(guildId, channel, candidates, count) {
   // couldn't be computed at all rather than excluding on missing data).
   const trending = found.filter(f => f.adx == null || f.adx >= NO_TREND_ADX);
 
-  // Thin/illiquid names can look "volatile" purely because a few trades moved the price, not
-  // because there's a real opportunity -- filter those out before ranking.
-  const eligible = trending.filter(f => avgDollarVolume(f.rows) >= MIN_DOLLAR_VOLUME);
-
   // Real correlation-based diversification, not a stock/crypto label split: rank by volatility,
   // but skip any candidate whose recent daily returns move too closely with one already picked,
   // so the result is actually-uncorrelated exposure rather than several near-identical bets.
-  const withReturns = eligible.map(f => ({ ...f, returns: dailyReturns(f.rows.slice(-61).map(r => r.close)) }));
+  const withReturns = trending.map(f => ({ ...f, returns: dailyReturns(f.rows.slice(-61).map(r => r.close)) }));
   const top = selectDiversified(withReturns, count, MAX_CORRELATION);
 
   if (!top.length) {
@@ -135,8 +136,7 @@ async function runAutobuild(guildId, channel, candidates, count) {
   const tickers = watchlist.replaceTickers(guildId, top.map(t => t.symbol));
   await channel.send({
     content: `Scan complete: checked ${found.length}/${candidates.length} candidates ` +
-      `(${found.length - trending.length} excluded for having no real trend, ` +
-      `${trending.length - eligible.length} for thin liquidity). ` +
+      `(${found.length - trending.length} excluded for having no real trend). ` +
       `Watchlist replaced with the ${tickers.length} biggest potential movers, filtered for diversification.`,
     embeds: [volatilityEmbed(top)],
     files: [logoAttachment()]
@@ -253,6 +253,45 @@ async function runShortsDrop(channel) {
   const filename = "stp-short.png";
   const file = new AttachmentBuilder(png, { name: filename });
   await channel.send({ embeds: [shortsEmbed(winner, loser, "Crypto", filename)], files: [file] });
+}
+
+// /discover scans the crypto candidate pool (not the watchlist) for coins whose RSI/MACD/EMA
+// score AND ADX trend line up into a real Buy/Strong Buy -- analyze()'s existing confidence
+// filter already requires real trend (ADX >= 20) before a Buy/Sell survives (see
+// applyConfidenceFilter in indicators.js). Volume is deliberately NOT part of this gate: Twelve
+// Data does not return volume for crypto pairs (confirmed 2026-07-22 across time_series, quote,
+// and time_series with an explicit exchange param -- the field is absent/zero everywhere, not a
+// free-tier gap), so a volume-surge or liquidity requirement here would silently exclude every
+// candidate, always. If a real crypto volume source ever gets wired in, this is where a surge
+// check belongs. Edge-triggered like /alerts: only fires on a fresh transition into Buy/Strong
+// Buy for that symbol, not every run it stays there.
+const DISCOVER_SAMPLE_SIZE = 50;
+async function runDiscoverScan(guildId, channel) {
+  const pool = universe.loadUniverse("crypto");
+  const candidates = universe.sample(pool, DISCOVER_SAMPLE_SIZE);
+  const lastVerdicts = watchlist.getDiscoverVerdicts(guildId);
+  const newVerdicts = {};
+  const fired = [];
+
+  for (const symbol of candidates) {
+    try {
+      const rows = await fetchDailySeries(symbol);
+      if (rows.length >= 30) {
+        const result = analyze(rows);
+        newVerdicts[symbol] = result.verdict;
+
+        const isFreshBuy = result.verdict.includes("Buy") && lastVerdicts[symbol] !== result.verdict;
+        if (isFreshBuy) fired.push({ symbol, ...result });
+      }
+    } catch (err) {
+      console.error(`Discover scan skipped ${symbol}: ${err.message}`);
+    }
+    await sleep(PACING_MS);
+  }
+
+  watchlist.saveDiscoverVerdicts(guildId, newVerdicts);
+  if (fired.length) await channel.send({ embeds: [discoverEmbed(fired)], files: [logoAttachment()] });
+  return fired;
 }
 
 // Fires only for tickers whose verdict is actionable (not Neutral) and has changed since the
@@ -378,6 +417,20 @@ client.once(Events.ClientReady, c => {
         } catch (err) {
           console.error(`Shorts drop (8pm) failed for guild ${guildId}: ${err.message}`);
         }
+      }
+    }
+
+    for (const [guildId, guildData] of watchlist.allGuildsWithDiscoverSchedule()) {
+      const { channelId, intervalHours, lastRun } = guildData.discoverSchedule;
+      const due = !lastRun || now - lastRun >= intervalHours * 60 * 60 * 1000;
+      if (!due) continue;
+
+      watchlist.markDiscoverRun(guildId, now);
+      try {
+        const channel = await client.channels.fetch(channelId);
+        await runDiscoverScan(guildId, channel);
+      } catch (err) {
+        console.error(`Discover scan failed for guild ${guildId}: ${err.message}`);
       }
     }
   }, 60 * 1000);
@@ -643,6 +696,35 @@ client.on(Events.InteractionCreate, async interaction => {
           runShortsDrop(interaction.channel).catch(err => {
             console.error(`Manual shorts run failed for guild ${interaction.guildId}: ${err.message}`);
             interaction.channel.send("Shorts scan failed partway through — check the bot logs.").catch(() => {});
+          });
+        }
+        break;
+      }
+
+      case "discover": {
+        const sub = interaction.options.getSubcommand();
+        if (sub === "on") {
+          const channel = interaction.options.getChannel("channel");
+          const intervalHours = Math.max(1, interaction.options.getInteger("interval_hours") || 4);
+          watchlist.setDiscoverSchedule(interaction.guildId, { channelId: channel.id, intervalHours, lastRun: null });
+          await interaction.reply(
+            `Discover on: every ${intervalHours}h, scanning ${DISCOVER_SAMPLE_SIZE} random crypto candidates for a fresh ` +
+            `Buy/Strong Buy backed by RSI/MACD/EMA scoring and confirmed real trend (ADX) -- posting to ${channel} only ` +
+            "when one qualifies. Note: volume isn't part of the check -- Twelve Data doesn't provide volume data for " +
+            "crypto pairs, so a surge/liquidity requirement isn't something this can honestly do right now. " +
+            "This flags what's worth a look, not a prediction -- you decide."
+          );
+        } else if (sub === "off") {
+          watchlist.setDiscoverSchedule(interaction.guildId, null);
+          await interaction.reply("Discover schedule turned off.");
+        } else if (sub === "now") {
+          const etaMin = Math.ceil((DISCOVER_SAMPLE_SIZE * PACING_MS) / 60000);
+          await interaction.reply(`Running a Discover scan now -- at ${DISCOVER_SAMPLE_SIZE} candidates, that's about ${etaMin} min. I'll post here when it's done.`);
+          runDiscoverScan(interaction.guildId, interaction.channel).then(async fired => {
+            if (!fired.length) await interaction.channel.send("Discover scan finished -- nothing cleared the bar this run.");
+          }).catch(err => {
+            console.error(`Manual discover run failed for guild ${interaction.guildId}: ${err.message}`);
+            interaction.channel.send("Discover scan failed partway through — check the bot logs.").catch(() => {});
           });
         }
         break;
