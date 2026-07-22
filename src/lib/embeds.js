@@ -1,6 +1,7 @@
 const { EmbedBuilder, AttachmentBuilder } = require("discord.js");
 const path = require("path");
 const { computeDrawdown } = require("./portfolio");
+const { formatMoney } = require("./format");
 
 const LOGO_PATH = path.join(__dirname, "..", "..", "assets", "logo.png");
 
@@ -22,7 +23,7 @@ function logoAttachment() {
 // safe to always append.
 function gapLine(gap) {
   if (!gap) return "";
-  return `\nGap to fill: $${gap.distance.toFixed(2)} (${gap.pct.toFixed(1)}%) ${gap.direction} to $${gap.level.toFixed(2)}`;
+  return `\nGap to fill: ${formatMoney(gap.distance)} (${gap.pct.toFixed(1)}%) ${gap.direction} to ${formatMoney(gap.level)}`;
 }
 
 // A suggested stop-loss at 2x ATR from the close, sized to the ticker's own typical range
@@ -31,7 +32,7 @@ function stopLossLine(r) {
   if (!r.atr || r.verdict === "Neutral") return "";
   const isBuySide = r.verdict.includes("Buy");
   const stopPrice = isBuySide ? r.last.close - 2 * r.atr : r.last.close + 2 * r.atr;
-  return `\nSuggested stop (2x ATR): $${Math.max(0, stopPrice).toFixed(2)}`;
+  return `\nSuggested stop (2x ATR): ${formatMoney(Math.max(0, stopPrice))}`;
 }
 
 function scanEmbed(results) {
@@ -45,7 +46,7 @@ function scanEmbed(results) {
 
   sorted.slice(0, 25).forEach(r => {
     embed.addFields({
-      name: `${r.symbol} · $${r.last.close.toFixed(2)} — ${r.verdict}`,
+      name: `${r.symbol} · ${formatMoney(r.last.close)} — ${r.verdict}`,
       value: `Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}${stopLossLine(r)}`,
       inline: false
     });
@@ -64,7 +65,7 @@ function alertEmbed(fired) {
 
   fired.forEach(r => {
     embed.addFields({
-      name: `${r.symbol} · $${r.last.close.toFixed(2)} — ${r.verdict}`,
+      name: `${r.symbol} · ${formatMoney(r.last.close)} — ${r.verdict}`,
       value: `Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}${stopLossLine(r)}`,
       inline: false
     });
@@ -84,7 +85,7 @@ function discoverEmbed(fired) {
   fired.forEach(r => {
     const surgeNote = r.volumeSurgeRatio ? ` · ${r.volumeSurgeRatio.toFixed(1)}× normal volume` : "";
     embed.addFields({
-      name: `${r.symbol} · $${r.last.close.toFixed(2)} — ${r.verdict}`,
+      name: `${r.symbol} · ${formatMoney(r.last.close)} — ${r.verdict}`,
       value: `Score ${r.score >= 0 ? "+" : ""}${r.score}${surgeNote} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}${stopLossLine(r)}`,
       inline: false
     });
@@ -104,7 +105,7 @@ function volatilityEmbed(results) {
 
   sorted.slice(0, 25).forEach(r => {
     embed.addFields({
-      name: `${r.symbol} · $${r.last.close.toFixed(2)} — ${r.volatility.toFixed(1)}% daily volatility`,
+      name: `${r.symbol} · ${formatMoney(r.last.close)} — ${r.volatility.toFixed(1)}% daily volatility`,
       value: `${r.verdict} · Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}${stopLossLine(r)}`,
       inline: false
     });
@@ -166,10 +167,10 @@ function portfolioEmbed(portfolio, currentPrices) {
     marketValue += value;
     const pnlPct = price != null ? ((price - pos.entryPrice) / pos.entryPrice) * 100 : null;
     return {
-      name: `${symbol} · ${pos.shares.toFixed(4)} shares @ $${pos.entryPrice.toFixed(2)}`,
+      name: `${symbol} · ${pos.shares.toFixed(4)} shares @ ${formatMoney(pos.entryPrice)}`,
       value: price != null
-        ? `Now $${price.toFixed(2)} (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%) · Stop $${pos.stopPrice.toFixed(2)}`
-        : `Current price unavailable · Stop $${pos.stopPrice.toFixed(2)}`,
+        ? `Now ${formatMoney(price)} (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%) · Stop ${formatMoney(pos.stopPrice)}`
+        : `Current price unavailable · Stop ${formatMoney(pos.stopPrice)}`,
       inline: false
     };
   });
@@ -219,13 +220,13 @@ function shortsEmbed(winner, loser, label, imageFilename) {
   embed.addFields(
     {
       name: `🟢 Winner: ${winner.symbol} · ${winner.pctChange >= 0 ? "+" : ""}${winner.pctChange.toFixed(1)}%`,
-      value: `Open $${winner.intraday.closes[0].toFixed(2)} → Now $${winner.price.toFixed(2)}` +
+      value: `Open ${formatMoney(winner.intraday.closes[0])} → Now ${formatMoney(winner.price)}` +
         (formatSurge(winner.volumeSurgeRatio) ? ` · Trading at ${formatSurge(winner.volumeSurgeRatio)}` : ""),
       inline: false
     },
     {
       name: `🔴 Loser: ${loser.symbol} · ${loser.pctChange >= 0 ? "+" : ""}${loser.pctChange.toFixed(1)}%`,
-      value: `Open $${loser.intraday.closes[0].toFixed(2)} → Now $${loser.price.toFixed(2)}` +
+      value: `Open ${formatMoney(loser.intraday.closes[0])} → Now ${formatMoney(loser.price)}` +
         (formatSurge(loser.volumeSurgeRatio) ? ` · Trading at ${formatSurge(loser.volumeSurgeRatio)}` : ""),
       inline: false
     }

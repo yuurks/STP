@@ -8,6 +8,7 @@ const fs = require("fs");
 const path = require("path");
 const sharp = require("sharp");
 const { fetchDailySeries, fetchIntradaySeries } = require("./marketData");
+const { formatMoney } = require("./format");
 const universe = require("./universe");
 
 const PACING_MS = 7500; // same as the bot -- stays under Twelve Data's free 8 req/min
@@ -62,10 +63,6 @@ async function findMover(universeKind, sampleSize) {
   }
 
   return { universeKind, candidateCount: candidates.length, checked, winner, loser };
-}
-
-function formatMoney(n) {
-  return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function parseBarTime(t) {

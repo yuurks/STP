@@ -116,7 +116,12 @@ function applyResults(portfolio, results, now = Date.now()) {
     next.cash -= allocation;
     next.positions[r.symbol] = {
       entryPrice: r.last.close, shares,
-      stopPrice: r.last.close - 2 * r.atr,
+      // Floored at 0 -- a real asset's price can't go negative, so an ATR wide enough to push
+      // this below zero (plausible for the sub-cent coins this bot now targets, where a single
+      // ATR can be a large fraction of the whole price) would otherwise display and store a
+      // nonsensical negative "stop price." Doesn't change exit behavior: low <= stopPrice can
+      // never trigger on a deeply negative stop anyway, since a real low is always positive.
+      stopPrice: Math.max(0, r.last.close - 2 * r.atr),
       verdict: r.verdict, openedAt: now
     };
     events.push({ type: "open", symbol: r.symbol, shares, price: r.last.close });
