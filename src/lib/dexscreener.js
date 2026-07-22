@@ -13,6 +13,7 @@ const BASE_URL = "https://api.dexscreener.com";
 // description, links) -- not literally every pair that's ever launched.
 async function fetchNewSolanaTokens() {
   const res = await fetch(`${BASE_URL}/token-profiles/latest/v1`);
+  if (!res.ok) throw new Error(`DexScreener token-profiles returned ${res.status}`);
   const data = await res.json();
   if (!Array.isArray(data)) return [];
   return data
@@ -20,16 +21,26 @@ async function fetchNewSolanaTokens() {
     .map(t => ({ tokenAddress: t.tokenAddress, url: t.url, updatedAt: t.updatedAt }));
 }
 
-// Real trading data for up to ~30 token addresses in one call (comma-separated, confirmed
-// batching support). Returns one entry per pair DexScreener has for these tokens -- a token can
-// have more than one pair (multiple pools); callers should pick the highest-liquidity pair per
-// token if they care about a single canonical price.
+// DexScreener's batch endpoint isn't documented with a hard address-count limit, but every
+// example in their own docs caps around 30 -- chunk defensively so a busier-than-usual feed
+// can't silently drop addresses past whatever the real limit turns out to be.
+const MAX_BATCH_ADDRESSES = 30;
+
+// Real trading data for any number of token addresses (comma-separated per request, chunked to
+// stay under DexScreener's batch limit). Returns one entry per pair DexScreener has for these
+// tokens -- a token can have more than one pair (multiple pools); callers should pick the
+// highest-liquidity pair per token if they care about a single canonical price.
 async function fetchTokenTradingData(chainId, addresses) {
   if (!addresses.length) return [];
-  const joined = addresses.join(",");
-  const res = await fetch(`${BASE_URL}/tokens/v1/${chainId}/${joined}`);
-  const data = await res.json();
-  return Array.isArray(data) ? data : [];
+  const results = [];
+  for (let i = 0; i < addresses.length; i += MAX_BATCH_ADDRESSES) {
+    const chunk = addresses.slice(i, i + MAX_BATCH_ADDRESSES);
+    const res = await fetch(`${BASE_URL}/tokens/v1/${chainId}/${chunk.join(",")}`);
+    if (!res.ok) throw new Error(`DexScreener tokens lookup returned ${res.status}`);
+    const data = await res.json();
+    if (Array.isArray(data)) results.push(...data);
+  }
+  return results;
 }
 
 module.exports = { fetchNewSolanaTokens, fetchTokenTradingData };

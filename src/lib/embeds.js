@@ -125,9 +125,14 @@ function degenEmbed(candidates) {
     const ratio = h1.sells > 0 ? (h1.buys / h1.sells).toFixed(1) : "∞";
     const ageHours = pair.pairCreatedAt ? ((Date.now() - pair.pairCreatedAt) / 3600000).toFixed(1) : "?";
     const report = pair.riskReport;
+    // Read the actual authority state rather than assuming "renounced" -- true today only
+    // because checkRisk() already filtered out anything where it wasn't, but this line
+    // shouldn't silently go stale if that filter logic ever changes.
+    const authorityLabel = report && !report.token?.mintAuthority && !report.token?.freezeAuthority
+      ? "mint/freeze renounced" : "mint/freeze: check manually";
     const riskLine = report
       ? `\nRisk screen: score ${report.score_normalised ?? report.score ?? "?"}/100 · ` +
-        `top holder ${(report.topHolders?.[0]?.pct || 0).toFixed(1)}% · mint/freeze renounced`
+        `top holder ${(report.topHolders?.[0]?.pct || 0).toFixed(1)}% · ${authorityLabel}`
       : "";
     embed.addFields({
       name: `${symbol} · ${formatMoney(parseFloat(pair.priceUsd) || 0)}`,
