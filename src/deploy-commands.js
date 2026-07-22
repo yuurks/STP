@@ -107,7 +107,7 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("degen")
-    .setDescription("HIGH RISK: alerts on new Solana pairs passing a liquidity/market-cap/buy-pressure + RugCheck risk screen (unvalidated)")
+    .setDescription("HIGH RISK: new Solana pairs passing liquidity/buy-pressure + a RugCheck risk screen (unvalidated)")
     .setDefaultMemberPermissions(MANAGE_GUILD_ONLY)
     .addSubcommand(sc =>
       sc.setName("on").setDescription("Turn on recurring Degen scans")
@@ -128,10 +128,24 @@ const commands = [
     .addSubcommand(sc => sc.setName("reset").setDescription("Wipe the paper portfolio and start over"))
 ].map(c => c.toJSON());
 
+// Note for next time this happens: discord.js's SlashCommandBuilder already throws immediately
+// (ExpectedConstraintError) the moment .setDescription()/.setName() is called with a string
+// outside Discord's length limits (100 chars for descriptions, 32 for names) -- confirmed by
+// testing it directly. That's what actually happened once: /degen's description grew past 100
+// chars in a later edit, so building the `commands` array itself threw before this script ever
+// reached rest.put() -- meaning /degen never registered at all -- while the other 9 commands
+// kept showing up in Discord, because an earlier, still-valid deploy had already registered
+// them (Discord keeps whatever was last successfully applied; this script never got that far
+// again until the description was shortened). No extra validation needed here -- the builder
+// already fails fast and points at the exact line. If you see "ExpectedConstraintError: Invalid
+// string length" running this script, that's what it means -- check description/name lengths
+// on whatever command you just touched.
+
 const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
 
 (async () => {
   try {
+    for (const command of commands) validateCommand(command, "");
     console.log("Registering slash commands...");
     await rest.put(Routes.applicationCommands(process.env.DISCORD_CLIENT_ID), { body: commands });
     console.log("Done. Commands can take up to an hour to show up everywhere the first time.");
