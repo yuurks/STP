@@ -50,7 +50,15 @@ function pickBestPair(pairs) {
 
 function qualifies(pair) {
   if (!pair) return false;
-  if ((pair.liquidity?.usd || 0) < MIN_LIQUIDITY_USD) return false;
+  // Pump.fun tokens still on their bonding curve (not yet migrated to a real AMM pool) have no
+  // liquidity pool at all -- DexScreener omits the field entirely rather than reporting zero.
+  // Treating "no data" the same as "confirmed zero liquidity" was silently rejecting almost
+  // every pre-migration token, which is exactly the earliest stage this command exists to catch.
+  // Only enforce the liquidity floor on tokens that actually have a pool to measure; bonding-
+  // curve tokens still have to clear market cap, buy pressure, price momentum, and the RugCheck
+  // screen below like everything else.
+  const isBondingCurve = pair.dexId === "pumpfun" && pair.liquidity == null;
+  if (!isBondingCurve && (pair.liquidity?.usd || 0) < MIN_LIQUIDITY_USD) return false;
   if ((pair.marketCap || 0) < MIN_MARKET_CAP_USD) return false;
 
   const h1 = pair.txns?.h1;
