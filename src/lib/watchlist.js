@@ -11,13 +11,15 @@ const DATA_FILE = path.join(__dirname, "..", "..", "data", "watchlists.json");
 // a deploy again, check this path against RAILWAY_VOLUME_MOUNT_PATH first.
 console.log(`Watchlist data file: ${DATA_FILE}`);
 
-// Accepts stock tickers (AAPL), and crypto/forex pairs written as BTC/USD, BTC-USD, or btcusd
-// (for common cases), normalizing all to Twelve Data's expected "BASE/QUOTE" or plain format.
+// This bot is crypto-only, but Twelve Data's underlying API still understands bare stock
+// tickers, and this normalizer stays lenient (not just crypto pairs) so /watch remove can still
+// clean up a stock ticker someone added back before the pivot. Real gating happens at
+// isCryptoTicker below, used by /watch add and /backtest -- not here.
 function normalizeSymbol(input) {
   let s = input.toUpperCase().trim();
   if (s.includes("/")) return s; // already in BASE/QUOTE form
   if (s.includes("-")) return s.replace("-", "/"); // BTC-USD -> BTC/USD
-  return s; // plain stock ticker, e.g. AAPL
+  return s; // anything else passed through as-is
 }
 
 // Real tickers/pairs are short and only ever use these characters. This guards against
@@ -30,6 +32,17 @@ function isValidTicker(input) {
   if (typeof input !== "string") return false;
   const s = input.trim();
   return s.length > 0 && s.length <= MAX_SYMBOL_LENGTH && VALID_SYMBOL.test(s.toUpperCase());
+}
+
+// Every real crypto pair this bot works with (crypto.txt, DexScreener, Twelve Data's crypto
+// endpoint) is written as BASE/QUOTE -- a bare symbol with no "/" or "-" is stock-shaped, not
+// crypto-shaped (that's exactly how a leftover ticker like "AAPL" survived the pivot to
+// crypto-only: /watch add never actually rejected it, and Twelve Data happily returns real
+// price data for it, so it just sat on a watchlist getting scanned forever). Used by /watch add
+// and /backtest; NOT used by /watch remove, which must stay able to clean up a ticker added
+// before this existed.
+function isCryptoTicker(input) {
+  return isValidTicker(input) && /[/-]/.test(input.trim());
 }
 
 function loadAll() {
@@ -411,5 +424,5 @@ module.exports = {
   getDegenAlerted, addDegenAlerted, setDegenSchedule, markDegenRun, allGuildsWithDegenSchedule,
   logDegenAlert, getDegenAlertHistory,
   getPortfolio, startPortfolio, savePortfolio, resetPortfolio,
-  normalizeSymbol, isValidTicker
+  normalizeSymbol, isValidTicker, isCryptoTicker
 };

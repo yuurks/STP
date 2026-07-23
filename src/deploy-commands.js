@@ -18,8 +18,8 @@ const commands = [
     .setDescription("Manage this server's scanner watchlist")
     .setDefaultMemberPermissions(MANAGE_GUILD_ONLY)
     .addSubcommand(sc =>
-      sc.setName("add").setDescription("Add one or more tickers/crypto pairs to the watchlist")
-        .addStringOption(o => o.setName("ticker").setDescription("e.g. AAPL, or BTC/USD -- comma or space separated for multiple, up to 50").setRequired(true))
+      sc.setName("add").setDescription("Add one or more crypto pairs to the watchlist")
+        .addStringOption(o => o.setName("ticker").setDescription("Crypto pair, e.g. BTC/USD -- comma or space separated for multiple, up to 50").setRequired(true))
     )
     .addSubcommand(sc =>
       sc.setName("remove").setDescription("Remove a ticker from the watchlist")
@@ -67,7 +67,7 @@ const commands = [
   new SlashCommandBuilder()
     .setName("backtest")
     .setDescription("Replay this bot's own signals over one ticker's history to see how they'd have done")
-    .addStringOption(o => o.setName("ticker").setDescription("Ticker or crypto pair, e.g. AAPL or BTC/USD").setRequired(true))
+    .addStringOption(o => o.setName("ticker").setDescription("Crypto pair, e.g. BTC/USD").setRequired(true))
     .addIntegerOption(o => o.setName("forward_days").setDescription("Days forward to measure each signal's return, 1-20 (default 5)").setRequired(false)),
 
   new SlashCommandBuilder()

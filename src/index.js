@@ -576,12 +576,12 @@ client.on(Events.InteractionCreate, async interaction => {
             break;
           }
 
-          const valid = candidates.filter(c => watchlist.isValidTicker(c));
-          const invalid = candidates.filter(c => !watchlist.isValidTicker(c));
+          const valid = candidates.filter(c => watchlist.isCryptoTicker(c));
+          const invalid = candidates.filter(c => !watchlist.isCryptoTicker(c));
 
           if (!valid.length) {
             await interaction.reply({
-              content: "None of that looked like a valid ticker — use short symbols like `AAPL` or pairs like `BTC/USD`, comma or space separated.",
+              content: "None of that looked like a crypto pair — this bot is crypto-only, use pairs like `BTC/USD` or `BTC-USD`, comma or space separated.",
               ephemeral: true
             });
             break;
@@ -589,7 +589,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
           const tickers = watchlist.addTickers(interaction.guildId, valid);
           const addedNote = `Added ${valid.length} ticker${valid.length === 1 ? "" : "s"}.`;
-          const skippedNote = invalid.length ? ` Skipped ${invalid.length} invalid: ${formatTickerList(invalid)}.` : "";
+          const skippedNote = invalid.length ? ` Skipped ${invalid.length} non-crypto: ${formatTickerList(invalid)}.` : "";
           await interaction.reply(`${addedNote}${skippedNote} Watchlist: ${formatTickerList(tickers)}`);
         } else if (sub === "remove") {
           const ticker = interaction.options.getString("ticker");
@@ -745,8 +745,8 @@ client.on(Events.InteractionCreate, async interaction => {
       case "backtest": {
         await interaction.deferReply();
         const ticker = interaction.options.getString("ticker");
-        if (!watchlist.isValidTicker(ticker)) {
-          await interaction.editReply("That doesn't look like a valid ticker.");
+        if (!watchlist.isCryptoTicker(ticker)) {
+          await interaction.editReply("That doesn't look like a crypto pair — this bot is crypto-only, try something like `BTC/USD`.");
           break;
         }
         const forwardDays = Math.min(20, Math.max(1, interaction.options.getInteger("forward_days") || 5));
