@@ -140,7 +140,7 @@ if you want a different role than whoever already has Manage Server.
 | `/discover now` | Run a Discover scan immediately instead of waiting for the schedule |
 | `/degen on channel:#...` | **HIGH RISK, unvalidated** — turn on recurring scans of DexScreener's newest Solana pairs for real liquidity + real buy pressure, default every 10 min. See limitations below before using this |
 | `/degen off` | Turn off recurring Degen scans |
-| `/degen now` | Run a Degen scan immediately instead of waiting for the schedule |
+| `/degen now` | Run a Degen scan immediately instead of waiting for the schedule -- if nothing fully qualifies, posts the single closest near-miss instead (clearly labeled, not a real alert) |
 
 ## Notes and honest limitations
 
@@ -294,6 +294,36 @@ if you want a different role than whoever already has Manage Server.
   this is a safety guarantee -- a coordinated team can pass every check here and still dump on
   holders. Every alert links to the pair's DexScreener page so you can look at the actual
   chart/holders yourself before doing anything -- treat that as mandatory, not optional.
+- **`/degen`'s filters check price direction, not just trade count**: a real alert once fired on
+  a token whose transaction count favored buys while the price was already crashing (confirmed
+  against the actual token's data: +more buy transactions than sell transactions in the same hour
+  its price fell over 40%). More buy *transactions* doesn't mean the price went *up* -- lots of
+  small buyers can still lose to fewer, bigger sellers. `/degen` now requires confirmed price
+  appreciation over the hour (`MIN_H1_PRICE_CHANGE_PCT`, default +5%) and rejects anything already
+  dropping more than 5% in just the last 5 minutes even if the hour overall still looks positive
+  (`MAX_M5_PRICE_DROP_PCT`) -- catches a coin in the act of reversing, not just ones that already
+  fully crashed. This reduces exposure to alerting into a visible reversal; it does not and cannot
+  prevent pump-and-dumps as a category, which is the base-rate outcome for most brand-new meme
+  coins, not a bug to fix away.
+- **`/degen` doesn't penalize pump.fun tokens still on their bonding curve**: tokens that haven't
+  migrated to a real AMM pool yet (`dexId: "pumpfun"`) have no liquidity field at all in
+  DexScreener's data -- not a reported zero, genuinely absent, since a bonding curve isn't a
+  traditional liquidity pool. Treating "no data" as "confirmed zero" was silently rejecting almost
+  every pre-migration token (confirmed via an instrumented live scan: 11 of 17 real candidates in
+  one run, rejected for this reason alone) -- exactly the earliest stage this command exists to
+  catch. The liquidity floor now only applies to tokens that actually have a pool to measure;
+  bonding-curve tokens still have to clear market cap, buy pressure, price momentum, and the
+  RugCheck screen like everything else.
+- **`/degen now` always returns something to look at**: if nothing fully clears the bar, it finds
+  the single closest near-miss (ranked by a 0-1 score across liquidity, market cap, buy pressure,
+  and price momentum -- takes the *weakest* metric, so a coin that's great on one thing and
+  terrible on another doesn't rank as "close") and posts it in a visually distinct, explicitly
+  labeled "did NOT clear the bar" embed listing the actual shortfalls (e.g. "Buy/sell ratio 1.4x
+  (need 2x)"). The RugCheck risk screen and the 48h age cutoff are never relaxed for this fallback
+  -- "closest to qualifying" never means "closest except for the part where it might be a scam";
+  a near-miss that fails the risk screen is skipped for the next-best one instead. Deliberately
+  scoped to `/degen now` only, not the scheduled scans -- an automatic "closest, still failed"
+  post every few minutes would spam and defeat the point of the filter.
 - **No real order execution**: `/portfolio` simulates trading (see below), but it is not
   connected to any brokerage and never risks real money. Turning this into real automated
   trades would require a brokerage API (e.g. Alpaca, Interactive Brokers), real capital at risk
