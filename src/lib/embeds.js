@@ -100,6 +100,39 @@ function formatDexScreenerVolume(usd) {
   return `$${usd.toFixed(0)}`;
 }
 
+// Shared per-candidate field content for both degenEmbed (real alerts) and degenClosestEmbed
+// (the "nothing qualified, here's the closest" fallback) -- same underlying data, just framed
+// differently in the embed around it. extraLine is appended last (used for shortfalls).
+function formatDegenField(pair, extraLine = "") {
+  const symbol = pair.baseToken?.symbol || "?";
+  const h1 = pair.txns?.h1 || { buys: 0, sells: 0 };
+  const ratio = h1.sells > 0 ? (h1.buys / h1.sells).toFixed(1) : "∞";
+  const ageHours = pair.pairCreatedAt ? ((Date.now() - pair.pairCreatedAt) / 3600000).toFixed(1) : "?";
+  const report = pair.riskReport;
+  // Read the actual authority state rather than assuming "renounced" -- true today only
+  // because checkRisk() already filtered out anything where it wasn't, but this line
+  // shouldn't silently go stale if that filter logic ever changes.
+  const authorityLabel = report && !report.token?.mintAuthority && !report.token?.freezeAuthority
+    ? "mint/freeze renounced" : "mint/freeze: check manually";
+  const riskLine = report
+    ? `\nRisk screen: score ${report.score_normalised ?? report.score ?? "?"}/100 · ` +
+      `top holder ${(report.topHolders?.[0]?.pct || 0).toFixed(1)}% · ${authorityLabel}`
+    : "";
+  const h1Change = pair.priceChange?.h1;
+  const m5Change = pair.priceChange?.m5;
+  const changeLine = h1Change != null
+    ? ` · 1h: ${h1Change >= 0 ? "+" : ""}${h1Change.toFixed(1)}% · 5m: ${m5Change != null ? (m5Change >= 0 ? "+" : "") + m5Change.toFixed(1) + "%" : "?"}`
+    : "";
+  return {
+    name: `${symbol} · ${formatMoney(parseFloat(pair.priceUsd) || 0)}`,
+    value: `Liquidity: ${formatDexScreenerVolume(pair.liquidity?.usd || 0)} · ` +
+      `Market cap: ${formatDexScreenerVolume(pair.marketCap || 0)} · ` +
+      `1h buys/sells: ${h1.buys}/${h1.sells} (${ratio}×)${changeLine} · Age: ${ageHours}h${riskLine}${extraLine}\n` +
+      `[View on DexScreener](${pair.url})`,
+    inline: false
+  };
+}
+
 // Brand-new Solana pairs from DexScreener -- momentum/liquidity/buy-pressure, not RSI/MACD/ADX
 // (impossible here, no historical data exists -- see src/lib/degen.js). Meaningfully higher risk
 // than every other alert this bot sends: rug pulls, honeypot contracts, and wash-traded volume
@@ -119,36 +152,30 @@ function degenEmbed(candidates) {
     })
     .setTimestamp();
 
-  candidates.forEach(pair => {
-    const symbol = pair.baseToken?.symbol || "?";
-    const h1 = pair.txns?.h1 || { buys: 0, sells: 0 };
-    const ratio = h1.sells > 0 ? (h1.buys / h1.sells).toFixed(1) : "∞";
-    const ageHours = pair.pairCreatedAt ? ((Date.now() - pair.pairCreatedAt) / 3600000).toFixed(1) : "?";
-    const report = pair.riskReport;
-    // Read the actual authority state rather than assuming "renounced" -- true today only
-    // because checkRisk() already filtered out anything where it wasn't, but this line
-    // shouldn't silently go stale if that filter logic ever changes.
-    const authorityLabel = report && !report.token?.mintAuthority && !report.token?.freezeAuthority
-      ? "mint/freeze renounced" : "mint/freeze: check manually";
-    const riskLine = report
-      ? `\nRisk screen: score ${report.score_normalised ?? report.score ?? "?"}/100 · ` +
-        `top holder ${(report.topHolders?.[0]?.pct || 0).toFixed(1)}% · ${authorityLabel}`
-      : "";
-    const h1Change = pair.priceChange?.h1;
-    const m5Change = pair.priceChange?.m5;
-    const changeLine = h1Change != null
-      ? ` · 1h: ${h1Change >= 0 ? "+" : ""}${h1Change.toFixed(1)}% · 5m: ${m5Change != null ? (m5Change >= 0 ? "+" : "") + m5Change.toFixed(1) + "%" : "?"}`
-      : "";
-    embed.addFields({
-      name: `${symbol} · ${formatMoney(parseFloat(pair.priceUsd) || 0)}`,
-      value: `Liquidity: ${formatDexScreenerVolume(pair.liquidity?.usd || 0)} · ` +
-        `Market cap: ${formatDexScreenerVolume(pair.marketCap || 0)} · ` +
-        `1h buys/sells: ${h1.buys}/${h1.sells} (${ratio}×)${changeLine} · Age: ${ageHours}h${riskLine}\n` +
-        `[View on DexScreener](${pair.url})`,
-      inline: false
-    });
-  });
+  candidates.forEach(pair => embed.addFields(formatDegenField(pair)));
+  return embed;
+}
 
+// The /degen now fallback when nothing actually clears the bar -- deliberately a different
+// color and explicit "did not qualify" framing so it can never be mistaken for a real alert.
+// Still passed the RugCheck risk screen (never skipped just because nothing else qualified) --
+// see findDegenCandidates in degen.js -- but everything else about it fell short somewhere,
+// listed explicitly below rather than left as a vague "closest."
+function degenClosestEmbed(pair) {
+  const embed = new EmbedBuilder()
+    .setTitle("🔍 Degen — Closest Match (Did Not Clear the Bar)")
+    .setColor(0x6b7280)
+    .setThumbnail("attachment://logo.png")
+    .setFooter({
+      text: "This did NOT pass the real filters -- it's just the closest candidate this scan found. " +
+        "Still passed the RugCheck risk screen, but the gaps below are real. Not an alert, not a recommendation."
+    })
+    .setTimestamp();
+
+  const shortfalls = pair.shortfalls?.length
+    ? `\nShortfalls: ${pair.shortfalls.join("; ")}`
+    : "";
+  embed.addFields(formatDegenField(pair, shortfalls));
   return embed;
 }
 
@@ -294,6 +321,6 @@ function shortsEmbed(winner, loser, label, imageFilename) {
 }
 
 module.exports = {
-  scanEmbed, alertEmbed, discoverEmbed, degenEmbed, volatilityEmbed, backtestEmbed, alertHistoryEmbed, portfolioEmbed,
+  scanEmbed, alertEmbed, discoverEmbed, degenEmbed, degenClosestEmbed, volatilityEmbed, backtestEmbed, alertHistoryEmbed, portfolioEmbed,
   shortsEmbed, logoAttachment, VERDICT_COLOR
 };

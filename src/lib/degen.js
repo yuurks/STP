@@ -48,17 +48,25 @@ function pickBestPair(pairs) {
   }, null);
 }
 
+// Pump.fun tokens still on their bonding curve (not yet migrated to a real AMM pool) have no
+// liquidity pool at all -- DexScreener omits the field entirely rather than reporting zero.
+function isBondingCurve(pair) {
+  return pair.dexId === "pumpfun" && pair.liquidity == null;
+}
+
+// A hard age cutoff applies even to the "closest" fallback below -- there's no version of "close
+// to qualifying" that should include a coin that's just not new anymore.
+function isTooOld(pair) {
+  if (!pair.pairCreatedAt) return false;
+  return (Date.now() - pair.pairCreatedAt) / (1000 * 60 * 60) > MAX_PAIR_AGE_HOURS;
+}
+
 function qualifies(pair) {
   if (!pair) return false;
-  // Pump.fun tokens still on their bonding curve (not yet migrated to a real AMM pool) have no
-  // liquidity pool at all -- DexScreener omits the field entirely rather than reporting zero.
-  // Treating "no data" the same as "confirmed zero liquidity" was silently rejecting almost
-  // every pre-migration token, which is exactly the earliest stage this command exists to catch.
   // Only enforce the liquidity floor on tokens that actually have a pool to measure; bonding-
   // curve tokens still have to clear market cap, buy pressure, price momentum, and the RugCheck
   // screen below like everything else.
-  const isBondingCurve = pair.dexId === "pumpfun" && pair.liquidity == null;
-  if (!isBondingCurve && (pair.liquidity?.usd || 0) < MIN_LIQUIDITY_USD) return false;
+  if (!isBondingCurve(pair) && (pair.liquidity?.usd || 0) < MIN_LIQUIDITY_USD) return false;
   if ((pair.marketCap || 0) < MIN_MARKET_CAP_USD) return false;
 
   const h1 = pair.txns?.h1;
@@ -72,12 +80,72 @@ function qualifies(pair) {
   const m5Change = pair.priceChange?.m5;
   if (m5Change != null && m5Change < MAX_M5_PRICE_DROP_PCT) return false;
 
-  if (pair.pairCreatedAt) {
-    const ageHours = (Date.now() - pair.pairCreatedAt) / (1000 * 60 * 60);
-    if (ageHours > MAX_PAIR_AGE_HOURS) return false;
-  }
+  if (isTooOld(pair)) return false;
 
   return true;
+}
+
+// 0-1 "how close is this to qualifying" score across the soft (continuous) criteria, taking the
+// WEAKEST one -- a coin that's great on liquidity but has terrible buy pressure isn't "close"
+// just because one metric looks good. 1.0 on a given metric means it already clears that bar.
+// Deliberately does NOT cover the RugCheck risk screen or the age cutoff -- those stay hard
+// requirements even for the "closest" fallback (see findDegenCandidates), since "closest to
+// qualifying" should never mean "closest except for the part where it might be a scam."
+function closenessScore(pair) {
+  const scores = [];
+
+  if (!isBondingCurve(pair)) {
+    scores.push(Math.min(1, (pair.liquidity?.usd || 0) / MIN_LIQUIDITY_USD));
+  }
+  scores.push(Math.min(1, (pair.marketCap || 0) / MIN_MARKET_CAP_USD));
+
+  const h1 = pair.txns?.h1;
+  const h1Total = h1 ? h1.buys + h1.sells : 0;
+  if (h1Total > 0) {
+    const ratio = h1.sells > 0 ? h1.buys / h1.sells : MIN_BUY_SELL_RATIO;
+    scores.push(Math.min(1, ratio / MIN_BUY_SELL_RATIO));
+    scores.push(Math.min(1, h1Total / MIN_H1_TXNS));
+  } else {
+    scores.push(0);
+  }
+
+  const h1Change = pair.priceChange?.h1;
+  scores.push(h1Change != null ? Math.min(1, Math.max(0, h1Change) / MIN_H1_PRICE_CHANGE_PCT) : 0);
+
+  const m5Change = pair.priceChange?.m5;
+  if (m5Change == null || m5Change >= MAX_M5_PRICE_DROP_PCT) scores.push(1);
+  else scores.push(Math.max(0, 1 + (m5Change - MAX_M5_PRICE_DROP_PCT) / 20));
+
+  return Math.min(...scores);
+}
+
+// Human-readable list of exactly which criteria this candidate fell short on -- so a "closest"
+// result shows its actual gaps instead of just a vague "didn't qualify."
+function describeShortfalls(pair) {
+  const gaps = [];
+  if (!isBondingCurve(pair) && (pair.liquidity?.usd || 0) < MIN_LIQUIDITY_USD) {
+    gaps.push(`Liquidity $${(pair.liquidity?.usd || 0).toFixed(0)} (need $${MIN_LIQUIDITY_USD.toLocaleString()})`);
+  }
+  if ((pair.marketCap || 0) < MIN_MARKET_CAP_USD) {
+    gaps.push(`Market cap $${(pair.marketCap || 0).toFixed(0)} (need $${MIN_MARKET_CAP_USD.toLocaleString()})`);
+  }
+  const h1 = pair.txns?.h1 || { buys: 0, sells: 0 };
+  const h1Total = h1.buys + h1.sells;
+  if (h1Total < MIN_H1_TXNS) {
+    gaps.push(`Only ${h1Total} trades in the last hour (need ${MIN_H1_TXNS}+)`);
+  } else {
+    const ratio = h1.sells > 0 ? h1.buys / h1.sells : Infinity;
+    if (ratio < MIN_BUY_SELL_RATIO) gaps.push(`Buy/sell ratio ${ratio.toFixed(1)}x (need ${MIN_BUY_SELL_RATIO}x)`);
+  }
+  const h1Change = pair.priceChange?.h1;
+  if (h1Change == null || h1Change < MIN_H1_PRICE_CHANGE_PCT) {
+    gaps.push(`1h price change ${h1Change != null ? h1Change.toFixed(1) + "%" : "unknown"} (need +${MIN_H1_PRICE_CHANGE_PCT}%)`);
+  }
+  const m5Change = pair.priceChange?.m5;
+  if (m5Change != null && m5Change < MAX_M5_PRICE_DROP_PCT) {
+    gaps.push(`Dropping ${m5Change.toFixed(1)}% in the last 5min (already reversing)`);
+  }
+  return gaps;
 }
 
 // Returns { passed, reason, report } -- reason is set (and passed=false) the first known
@@ -103,10 +171,15 @@ async function checkRisk(mintAddress) {
 
 // alertedAddresses: a Set of token addresses already surfaced in a previous run, so the same
 // token doesn't get re-alerted every scan just for still being in DexScreener's rolling
-// "newest profiles" feed.
-async function findDegenCandidates(alertedAddresses) {
+// "newest profiles" feed. includeClosest: only set by /degen now (the manual, on-demand
+// trigger) -- when nothing fully qualifies, finds the single closest candidate (by
+// closenessScore, still required to pass the RugCheck risk screen and the age cutoff) so a
+// manual request always returns something to look at. Scheduled runs never pass this: showing a
+// "closest, still failed" coin automatically every few minutes would spam and defeat the point
+// of the filter -- the fallback only makes sense when a human explicitly asked right now.
+async function findDegenCandidates(alertedAddresses, { includeClosest = false } = {}) {
   const newTokens = await fetchNewSolanaTokens();
-  if (!newTokens.length) return { checked: 0, candidates: [] };
+  if (!newTokens.length) return { checked: 0, candidates: [], closest: null };
 
   const addresses = newTokens.map(t => t.tokenAddress);
   const allPairs = await fetchTokenTradingData("solana", addresses);
@@ -123,10 +196,14 @@ async function findDegenCandidates(alertedAddresses) {
   // RugCheck is only called for candidates that already cleared liquidity/market cap/buy
   // pressure/age, to keep the risk-screen call count small.
   const preQualified = [];
+  const nearMisses = []; // { pair, score } -- only populated when includeClosest is set
   for (const [addr, pairs] of byToken) {
     if (alertedAddresses.has(addr)) continue;
     const best = pickBestPair(pairs);
+    if (!best || isTooOld(best)) continue;
+
     if (qualifies(best)) preQualified.push(best);
+    else if (includeClosest) nearMisses.push({ pair: best, score: closenessScore(best) });
   }
 
   const candidates = [];
@@ -143,7 +220,25 @@ async function findDegenCandidates(alertedAddresses) {
     }
   }
 
-  return { checked: newTokens.length, candidates };
+  let closest = null;
+  if (includeClosest && !candidates.length && nearMisses.length) {
+    nearMisses.sort((a, b) => b.score - a.score);
+    // Try the top few by closeness score, in case the single closest one fails the risk screen
+    // too -- the risk screen is never skipped just because nothing else qualified.
+    for (const { pair, score } of nearMisses.slice(0, 5)) {
+      try {
+        const { passed, report } = await checkRisk(pair.baseToken.address);
+        if (passed) {
+          closest = { ...pair, riskReport: report, closenessScore: score, shortfalls: describeShortfalls(pair) };
+          break;
+        }
+      } catch (err) {
+        console.error(`Risk check failed for ${pair.baseToken.symbol}: ${err.message}`);
+      }
+    }
+  }
+
+  return { checked: newTokens.length, candidates, closest };
 }
 
 module.exports = {

@@ -12,7 +12,7 @@ const shorts = require("./lib/shorts");
 const degen = require("./lib/degen");
 const { findDegenCandidates } = degen;
 const {
-  scanEmbed, alertEmbed, discoverEmbed, degenEmbed, volatilityEmbed, backtestEmbed, alertHistoryEmbed, portfolioEmbed, shortsEmbed, logoAttachment
+  scanEmbed, alertEmbed, discoverEmbed, degenEmbed, degenClosestEmbed, volatilityEmbed, backtestEmbed, alertHistoryEmbed, portfolioEmbed, shortsEmbed, logoAttachment
 } = require("./lib/embeds");
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -322,14 +322,20 @@ async function runDiscoverScan(guildId, channel) {
 // real buy pressure (see src/lib/degen.js for the exact filters and why this can't use the
 // RSI/MACD/ADX engine at all). Uses DexScreener's own 60 req/min budget, entirely separate from
 // Twelve Data's 800/day -- doesn't compete with any other feature's quota.
-async function runDegenScan(guildId, channel) {
+// includeClosest: only ever passed true from /degen now (the manual trigger below) -- when
+// nothing fully qualifies, posts the single closest near-miss instead (still risk-screened,
+// clearly labeled as not a real alert). Scheduled runs never set this: an automatic "closest,
+// still failed" post every few minutes would spam and defeat the point of the filter.
+async function runDegenScan(guildId, channel, { includeClosest = false } = {}) {
   const alerted = new Set(watchlist.getDegenAlerted(guildId));
-  const { checked, candidates } = await findDegenCandidates(alerted);
+  const { checked, candidates, closest } = await findDegenCandidates(alerted, { includeClosest });
   if (candidates.length) {
     watchlist.addDegenAlerted(guildId, candidates.map(c => c.baseToken.address));
     await channel.send({ embeds: [degenEmbed(candidates)], files: [logoAttachment()] });
+  } else if (closest) {
+    await channel.send({ embeds: [degenClosestEmbed(closest)], files: [logoAttachment()] });
   }
-  return { checked, candidates };
+  return { checked, candidates, closest };
 }
 
 // Fires only for tickers whose verdict is actionable (not Neutral) and has changed since the
@@ -815,8 +821,10 @@ client.on(Events.InteractionCreate, async interaction => {
           await interaction.reply("Degen schedule turned off.");
         } else if (sub === "now") {
           await interaction.reply("Running a Degen scan now -- this is fast (DexScreener, not Twelve Data), posting here when it's done.");
-          runDegenScan(interaction.guildId, interaction.channel).then(async ({ candidates }) => {
-            if (!candidates.length) await interaction.channel.send("Degen scan finished -- nothing cleared the bar this run.");
+          runDegenScan(interaction.guildId, interaction.channel, { includeClosest: true }).then(async ({ candidates, closest }) => {
+            if (!candidates.length && !closest) {
+              await interaction.channel.send("Degen scan finished -- nothing cleared the bar, and no risk-screen-clean near-miss either this run.");
+            }
           }).catch(err => {
             console.error(`Manual degen run failed for guild ${interaction.guildId}: ${err.message}`);
             interaction.channel.send("Degen scan failed partway through — check the bot logs.").catch(() => {});
