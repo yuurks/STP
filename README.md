@@ -138,9 +138,11 @@ if you want a different role than whoever already has Manage Server.
 | `/discover on channel:#...` | Turn on recurring scans of the crypto pool for a fresh Buy/Strong Buy (RSI/MACD/EMA scoring + confirmed ADX trend) — posts an alert only when one qualifies, so you can look and decide, default every 4h |
 | `/discover off` | Turn off recurring Discover scans |
 | `/discover now` | Run a Discover scan immediately instead of waiting for the schedule |
+| `/discover history` | **One-off**: see how past Discover alerts *actually* performed — same stop-aware, real-price evaluation `/alerts history` uses, needs ~5 days since firing |
 | `/degen on channel:#...` | **HIGH RISK, unvalidated** — turn on recurring scans of DexScreener's newest Solana pairs for real liquidity + real buy pressure, default every 10 min. See limitations below before using this |
 | `/degen off` | Turn off recurring Degen scans |
 | `/degen now` | Run a Degen scan immediately instead of waiting for the schedule -- if nothing fully qualifies, posts the single closest near-miss instead (clearly labeled, not a real alert) |
+| `/degen history` | **One-off**: see how past Degen alerts *actually* performed — raw current-price-vs-logged-price (no daily candles exist to replay a stop), needs ~1 hour since firing |
 
 ## Notes and honest limitations
 
@@ -211,18 +213,27 @@ if you want a different role than whoever already has Manage Server.
   elsewhere in the score. Needs ~200 days of history to ever fire (the default fetch window was
   bumped from 120 to 250 days specifically for this) -- newer tickers without that much history
   just won't show it, same graceful "not enough data" behavior as every other indicator here.
-- **`/backtest` and `/alerts history` are the only things that actually validate this bot** —
-  everything else is textbook indicator theory that sounds reasonable but has never been checked
+- **`/backtest`, `/alerts history`, `/discover history`, and `/degen history` are the only things
+  that actually validate this bot** — everything else is textbook indicator theory (or, for
+  `/degen`, momentum/liquidity heuristics) that sounds reasonable but has never been checked
   against real outcomes. `/backtest` replays history fast but on necessarily small samples
   (a single ticker's fetched window rarely produces more than a handful of qualifying signals,
-  given how selective the confidence filter is). `/alerts history` is slower to build up (needs
-  real time to pass) but measures actual forward performance, not a simulation. Neither is
-  statistical proof of anything — treat both as a rough, honest gut-check, not validation.
-  Both are stop-aware: they walk day-by-day through the time since the signal fired and check
-  whether the same 2x-ATR stop shown in `/scan` would have been hit first, scoring the outcome
-  at the stop price rather than the latest close if so (shown as "Stopped out: X/N" per verdict
-  type). `/alerts history` can only do this for alerts fired after ATR started being logged
-  alongside them — older log entries fall back to a plain latest-price-vs-fired-price comparison.
+  given how selective the confidence filter is). `/alerts history` and `/discover history` are
+  slower to build up (need real time to pass) but measure actual forward performance, not a
+  simulation — same evaluation logic for both, since `/discover` fires off the same daily-candle
+  indicator engine `/alerts` does, just against the crypto pool instead of a server's watchlist.
+  None of this is statistical proof of anything — treat all of it as a rough, honest gut-check,
+  not validation. `/backtest`, `/alerts history`, and `/discover history` are all stop-aware: they
+  walk day-by-day through the time since the signal fired and check whether the same 2x-ATR stop
+  shown in `/scan` would have been hit first, scoring the outcome at the stop price rather than
+  the latest close if so (shown as "Stopped out: X/N" per verdict type). They can only do this for
+  alerts fired after ATR started being logged alongside them — older log entries fall back to a
+  plain latest-price-vs-fired-price comparison. `/degen history` can't be stop-aware at all — no
+  daily candles exist for a token that's existed for hours, so there's no path to replay a stop
+  against; it's a plain current-DexScreener-price-vs-price-when-alerted comparison, and it explicitly
+  reports how many past alerts got excluded because DexScreener no longer returns that token at
+  all (almost always because it died or got rugged) — excluding those from the average makes the
+  win rate look better than reality, not worse, so that count is shown, not hidden.
 - **`/shorts` can't fully automate posting to YouTube**: at the scheduled time (4pm and 8pm ET,
   both) the bot scans a sample of small/mid-cap crypto for the day's single biggest gainer/loser,
   renders the result as a 1080x1920 PNG (built as SVG server-side and rasterized with `sharp`, not
