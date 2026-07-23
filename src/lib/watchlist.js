@@ -190,6 +190,27 @@ function saveVerdicts(guildId, verdicts) {
 // tracking bucket, separate from the watchlist's lastVerdicts -- same symbol could appear in
 // both scopes, and mixing them would make a manual /scan's verdict suppress a /discover alert
 // (or vice versa) for reasons that wouldn't make sense to someone reading the alert.
+// Same idea as logAlert/getAlertHistory, kept in its own bucket for the same reason
+// discoverVerdicts is separate from the watchlist's lastVerdicts -- a /discover alert and an
+// /alerts alert on the same symbol are different claims and shouldn't be evaluated together.
+const MAX_DISCOVER_ALERT_HISTORY = 200;
+function logDiscoverAlert(guildId, symbol, verdict, price, atr) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.discoverAlertHistory = guild.discoverAlertHistory || [];
+  guild.discoverAlertHistory.push({ symbol, verdict, price, atr: atr || null, timestamp: Date.now() });
+  if (guild.discoverAlertHistory.length > MAX_DISCOVER_ALERT_HISTORY) {
+    guild.discoverAlertHistory = guild.discoverAlertHistory.slice(-MAX_DISCOVER_ALERT_HISTORY);
+  }
+  saveAll(all);
+}
+
+function getDiscoverAlertHistory(guildId) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  return guild.discoverAlertHistory || [];
+}
+
 function getDiscoverVerdicts(guildId) {
   const all = loadAll();
   const guild = ensureGuild(all, guildId);
@@ -238,6 +259,28 @@ function addDegenAlerted(guildId, addresses) {
   const guild = ensureGuild(all, guildId);
   guild.degenAlerted = [...new Set([...(guild.degenAlerted || []), ...addresses])].slice(-MAX_DEGEN_ALERTED);
   saveAll(all);
+}
+
+// Real performance tracking for /degen, same spirit as logAlert but a different shape --
+// there's no verdict (every degen alert is the same "cleared the bar" claim) and price is
+// stored under `price` (not `priceUsd`) to stay consistent with the alerts/discover history
+// schema. address is what /degen history uses to re-look-up the token on DexScreener later.
+const MAX_DEGEN_ALERT_HISTORY = 200;
+function logDegenAlert(guildId, address, symbol, price, url) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.degenAlertHistory = guild.degenAlertHistory || [];
+  guild.degenAlertHistory.push({ address, symbol, price, url, timestamp: Date.now() });
+  if (guild.degenAlertHistory.length > MAX_DEGEN_ALERT_HISTORY) {
+    guild.degenAlertHistory = guild.degenAlertHistory.slice(-MAX_DEGEN_ALERT_HISTORY);
+  }
+  saveAll(all);
+}
+
+function getDegenAlertHistory(guildId) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  return guild.degenAlertHistory || [];
 }
 
 function setDegenSchedule(guildId, config) {
@@ -363,9 +406,10 @@ module.exports = {
   logAlert, getAlertHistory,
   setAlertDigestSchedule, markAlertDigestRun, allGuildsWithAlertDigestSchedule,
   setShortsSchedule, allGuildsWithShortsSchedule, markShortRun,
-  getDiscoverVerdicts, saveDiscoverVerdicts,
+  getDiscoverVerdicts, saveDiscoverVerdicts, logDiscoverAlert, getDiscoverAlertHistory,
   setDiscoverSchedule, markDiscoverRun, allGuildsWithDiscoverSchedule,
   getDegenAlerted, addDegenAlerted, setDegenSchedule, markDegenRun, allGuildsWithDegenSchedule,
+  logDegenAlert, getDegenAlertHistory,
   getPortfolio, startPortfolio, savePortfolio, resetPortfolio,
   normalizeSymbol, isValidTicker
 };

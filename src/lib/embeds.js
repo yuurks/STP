@@ -236,6 +236,59 @@ function alertHistoryEmbed(summary, evaluatedCount) {
   return embed;
 }
 
+// Same stop-aware evaluation as alertHistoryEmbed, just a distinct title/footer so a /discover
+// result is never mistaken for an /alerts one -- they scan different pools (candidate pool vs.
+// this server's watchlist) and shouldn't be read as the same track record.
+function discoverHistoryEmbed(summary, evaluatedCount) {
+  const embed = new EmbedBuilder()
+    .setTitle("🔎 Discover History — Real Performance")
+    .setColor(0x8a63d2)
+    .setThumbnail("attachment://logo.png")
+    .setFooter({ text: `${evaluatedCount} past Discover alerts evaluated -- small sample. Not financial advice.` })
+    .setTimestamp();
+
+  summaryFields(embed, summary, "(since firing, stop-aware)");
+  return embed;
+}
+
+// Degen's performance tracking can't reuse summaryFields: there's no verdict to group by (every
+// degen alert is the same "cleared the bar" claim), no ATR/stop simulation is possible (no
+// intraday price path exists for a raw DexScreener snapshot, only current vs. logged), and the
+// excluded count matters enough to say out loud -- a token DexScreener no longer returns is
+// almost always dead/rugged, not a data hiccup, so silently dropping it from the average would
+// make the win rate look better than reality, not worse.
+function degenHistoryEmbed(evaluated, excludedCount) {
+  const embed = new EmbedBuilder()
+    .setTitle("💀 Degen History — Real Performance")
+    .setColor(0x8a63d2)
+    .setThumbnail("attachment://logo.png")
+    .setTimestamp();
+
+  const wins = evaluated.filter(e => e.returnPct > 0).length;
+  const winRate = (wins / evaluated.length) * 100;
+  const avgReturn = evaluated.reduce((a, e) => a + e.returnPct, 0) / evaluated.length;
+  const sorted = [...evaluated].sort((a, b) => b.returnPct - a.returnPct);
+  const best = sorted[0];
+  const worst = sorted[sorted.length - 1];
+
+  embed.addFields({
+    name: `${evaluated.length} alert(s) evaluated`,
+    value:
+      `Win rate: ${winRate.toFixed(0)}% · Avg return: ${avgReturn >= 0 ? "+" : ""}${avgReturn.toFixed(1)}%\n` +
+      `Best: ${best.symbol} ${best.returnPct >= 0 ? "+" : ""}${best.returnPct.toFixed(1)}% · ` +
+      `Worst: ${worst.symbol} ${worst.returnPct >= 0 ? "+" : ""}${worst.returnPct.toFixed(1)}%`,
+    inline: false
+  });
+
+  const excludedNote = excludedCount > 0
+    ? `${excludedCount} logged alert(s) excluded -- DexScreener no longer returns them, almost always because the token died or got rugged, which means this win rate likely skews optimistic, not pessimistic. `
+    : "";
+  embed.setFooter({
+    text: `${excludedNote}Raw price-then vs. price-now -- no stop-loss simulation (no intraday path data exists to check one against). High risk, unvalidated. Not financial advice.`
+  });
+  return embed;
+}
+
 function portfolioEmbed(portfolio, currentPrices) {
   const embed = new EmbedBuilder()
     .setTitle("📒 Paper Portfolio")
@@ -321,6 +374,7 @@ function shortsEmbed(winner, loser, label, imageFilename) {
 }
 
 module.exports = {
-  scanEmbed, alertEmbed, discoverEmbed, degenEmbed, degenClosestEmbed, volatilityEmbed, backtestEmbed, alertHistoryEmbed, portfolioEmbed,
+  scanEmbed, alertEmbed, discoverEmbed, degenEmbed, degenClosestEmbed, volatilityEmbed, backtestEmbed,
+  alertHistoryEmbed, discoverHistoryEmbed, degenHistoryEmbed, portfolioEmbed,
   shortsEmbed, logoAttachment, VERDICT_COLOR
 };

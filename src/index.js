@@ -11,8 +11,10 @@ const portfolioLib = require("./lib/portfolio");
 const shorts = require("./lib/shorts");
 const degen = require("./lib/degen");
 const { findDegenCandidates } = degen;
+const { fetchTokenTradingData } = require("./lib/dexscreener");
 const {
-  scanEmbed, alertEmbed, discoverEmbed, degenEmbed, degenClosestEmbed, volatilityEmbed, backtestEmbed, alertHistoryEmbed, portfolioEmbed, shortsEmbed, logoAttachment
+  scanEmbed, alertEmbed, discoverEmbed, degenEmbed, degenClosestEmbed, volatilityEmbed, backtestEmbed,
+  alertHistoryEmbed, discoverHistoryEmbed, degenHistoryEmbed, portfolioEmbed, shortsEmbed, logoAttachment
 } = require("./lib/embeds");
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -168,7 +170,9 @@ async function runAutobuild(guildId, channel, candidates, count) {
 const ALERT_EVAL_MIN_AGE_MS = 5 * 24 * 60 * 60 * 1000; // ~5 trading days, treated loosely as calendar days
 const ALERT_EVAL_MAX_SYMBOLS = 30;
 const ALERT_EVAL_LOOKBACK_DAYS = 120;
-async function runAlertHistory(channel, eligible) {
+// embedFn defaults to /alerts' own embed; /discover history passes discoverHistoryEmbed instead
+// -- same evaluation logic (daily candles, stop-aware), just a different track record to label.
+async function runAlertHistory(channel, eligible, embedFn = alertHistoryEmbed) {
   const uniqueSymbols = [...new Set(eligible.map(h => h.symbol))].slice(0, ALERT_EVAL_MAX_SYMBOLS);
   const seriesBySymbol = {};
   for (const symbol of uniqueSymbols) {
@@ -234,7 +238,7 @@ async function runAlertHistory(channel, eligible) {
   });
 
   await channel.send({
-    embeds: [alertHistoryEmbed(summary, evaluated.length)],
+    embeds: [embedFn(summary, evaluated.length)],
     files: [logoAttachment()]
   });
 }
@@ -314,8 +318,63 @@ async function runDiscoverScan(guildId, channel) {
   }
 
   watchlist.saveDiscoverVerdicts(guildId, newVerdicts);
-  if (fired.length) await channel.send({ embeds: [discoverEmbed(fired)], files: [logoAttachment()] });
+  if (fired.length) {
+    for (const r of fired) watchlist.logDiscoverAlert(guildId, r.symbol, r.verdict, r.last.close, r.atr);
+    await channel.send({ embeds: [discoverEmbed(fired)], files: [logoAttachment()] });
+  }
   return fired;
+}
+
+// Degen alerts move on the scale of minutes/hours, not the multi-day cadence /alerts and
+// /discover need for a daily candle to even exist -- an hour is enough for DexScreener's price
+// to have actually moved since the alert fired.
+const DEGEN_EVAL_MIN_AGE_MS = 60 * 60 * 1000;
+
+// No daily candles exist for these tokens (see dexscreener.js), so this can't replay a stop-loss
+// path like runAlertHistory does -- just current DexScreener price vs. the price logged at alert
+// time. A token DexScreener no longer returns at all is excluded from the average (can't compute
+// a return with no current price), not scored as a loss -- but that's very likely undercounting
+// real losses (dead liquidity/rugged tokens are exactly the ones DexScreener stops returning), so
+// the excluded count is surfaced in the embed rather than silently dropped.
+async function runDegenHistory(channel, eligible) {
+  const addresses = [...new Set(eligible.map(h => h.address))];
+  const currentByAddress = new Map();
+  try {
+    const pairs = await fetchTokenTradingData("solana", addresses);
+    for (const pair of pairs) {
+      const addr = pair.baseToken?.address;
+      if (!addr) continue;
+      const liq = pair.liquidity?.usd || 0;
+      const existing = currentByAddress.get(addr);
+      if (!existing || liq > (existing.liquidity?.usd || 0)) currentByAddress.set(addr, pair);
+    }
+  } catch (err) {
+    console.error(`Degen history lookup failed: ${err.message}`);
+    await channel.send("Couldn't reach DexScreener to check past Degen alerts -- try again later.");
+    return;
+  }
+
+  const evaluated = [];
+  let excludedCount = 0;
+  for (const h of eligible) {
+    const current = currentByAddress.get(h.address);
+    const currentPrice = current ? parseFloat(current.priceUsd) : NaN;
+    if (!current || !currentPrice || !h.price) {
+      excludedCount++;
+      continue;
+    }
+    evaluated.push({ symbol: h.symbol, returnPct: ((currentPrice - h.price) / h.price) * 100 });
+  }
+
+  if (!evaluated.length) {
+    await channel.send(
+      `None of the ${eligible.length} eligible past Degen alert(s) could be evaluated -- DexScreener no ` +
+      "longer returns any of them (likely delisted/rugged/dead liquidity)."
+    );
+    return;
+  }
+
+  await channel.send({ embeds: [degenHistoryEmbed(evaluated, excludedCount)], files: [logoAttachment()] });
 }
 
 // /degen scans DexScreener's rolling feed of newly-profiled Solana tokens for real liquidity +
@@ -331,6 +390,9 @@ async function runDegenScan(guildId, channel, { includeClosest = false } = {}) {
   const { checked, candidates, closest } = await findDegenCandidates(alerted, { includeClosest });
   if (candidates.length) {
     watchlist.addDegenAlerted(guildId, candidates.map(c => c.baseToken.address));
+    for (const c of candidates) {
+      watchlist.logDegenAlert(guildId, c.baseToken.address, c.baseToken.symbol, parseFloat(c.priceUsd) || 0, c.url);
+    }
     await channel.send({ embeds: [degenEmbed(candidates)], files: [logoAttachment()] });
   } else if (closest) {
     await channel.send({ embeds: [degenClosestEmbed(closest)], files: [logoAttachment()] });
@@ -794,6 +856,27 @@ client.on(Events.InteractionCreate, async interaction => {
             console.error(`Manual discover run failed for guild ${interaction.guildId}: ${err.message}`);
             interaction.channel.send("Discover scan failed partway through — check the bot logs.").catch(() => {});
           });
+        } else if (sub === "history") {
+          const history = watchlist.getDiscoverAlertHistory(interaction.guildId);
+          const eligible = history.filter(h => Date.now() - h.timestamp >= ALERT_EVAL_MIN_AGE_MS);
+
+          if (!history.length) {
+            await interaction.reply({ content: "No Discover alerts have fired yet for this server.", ephemeral: true });
+            break;
+          }
+          if (!eligible.length) {
+            await interaction.reply({
+              content: `${history.length} Discover alert(s) logged, but none are old enough yet to evaluate (needs ~5 days since firing).`,
+              ephemeral: true
+            });
+            break;
+          }
+
+          await interaction.reply(`Checking real performance of ${eligible.length} past Discover alert(s)...`);
+          runAlertHistory(interaction.channel, eligible, discoverHistoryEmbed).catch(err => {
+            console.error(`Discover history check failed for guild ${interaction.guildId}: ${err.message}`);
+            interaction.channel.send("Discover history check failed partway through — check the bot logs.").catch(() => {});
+          });
         }
         break;
       }
@@ -828,6 +911,27 @@ client.on(Events.InteractionCreate, async interaction => {
           }).catch(err => {
             console.error(`Manual degen run failed for guild ${interaction.guildId}: ${err.message}`);
             interaction.channel.send("Degen scan failed partway through — check the bot logs.").catch(() => {});
+          });
+        } else if (sub === "history") {
+          const history = watchlist.getDegenAlertHistory(interaction.guildId);
+          const eligible = history.filter(h => Date.now() - h.timestamp >= DEGEN_EVAL_MIN_AGE_MS);
+
+          if (!history.length) {
+            await interaction.reply({ content: "No Degen alerts have fired yet for this server.", ephemeral: true });
+            break;
+          }
+          if (!eligible.length) {
+            await interaction.reply({
+              content: `${history.length} Degen alert(s) logged, but none are old enough yet to evaluate (needs ~1 hour since firing).`,
+              ephemeral: true
+            });
+            break;
+          }
+
+          await interaction.reply(`Checking real performance of ${eligible.length} past Degen alert(s)...`);
+          runDegenHistory(interaction.channel, eligible).catch(err => {
+            console.error(`Degen history check failed for guild ${interaction.guildId}: ${err.message}`);
+            interaction.channel.send("Degen history check failed partway through — check the bot logs.").catch(() => {});
           });
         }
         break;

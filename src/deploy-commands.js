@@ -103,7 +103,8 @@ const commands = [
         .addIntegerOption(o => o.setName("interval_hours").setDescription("How often to scan, in hours (default 4; rejected if too fast for the daily request budget)").setRequired(false))
     )
     .addSubcommand(sc => sc.setName("off").setDescription("Turn off recurring Discover scans"))
-    .addSubcommand(sc => sc.setName("now").setDescription("Run a Discover scan right now instead of waiting for the schedule")),
+    .addSubcommand(sc => sc.setName("now").setDescription("Run a Discover scan right now instead of waiting for the schedule"))
+    .addSubcommand(sc => sc.setName("history").setDescription("See how past Discover alerts actually performed (needs ~5 days since they fired)")),
 
   new SlashCommandBuilder()
     .setName("degen")
@@ -115,7 +116,8 @@ const commands = [
         .addIntegerOption(o => o.setName("interval_minutes").setDescription("How often to scan, in minutes, min 2 (default 10)").setRequired(false))
     )
     .addSubcommand(sc => sc.setName("off").setDescription("Turn off recurring Degen scans"))
-    .addSubcommand(sc => sc.setName("now").setDescription("Run a Degen scan right now instead of waiting for the schedule")),
+    .addSubcommand(sc => sc.setName("now").setDescription("Run a Degen scan right now instead of waiting for the schedule"))
+    .addSubcommand(sc => sc.setName("history").setDescription("See how past Degen alerts actually performed (needs ~1 hour since they fired)")),
 
   new SlashCommandBuilder()
     .setName("portfolio")
