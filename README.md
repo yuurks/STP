@@ -143,6 +143,10 @@ if you want a different role than whoever already has Manage Server.
 | `/degen off` | Turn off recurring Degen scans |
 | `/degen now` | Run a Degen scan immediately instead of waiting for the schedule -- if nothing fully qualifies, posts the single closest near-miss instead (clearly labeled, not a real alert) |
 | `/degen history` | **One-off**: see how past Degen alerts *actually* performed — raw current-price-vs-logged-price (no daily candles exist to replay a stop), needs ~1 hour since firing |
+| `/breakout on channel:#...` | **HIGH RISK, unvalidated** — same bar as `/degen` (liquidity/buy-pressure/market-cap/momentum + RugCheck), sourced from Raydium's volume-ranked pool list instead of DexScreener's newest-pairs feed, with **no age requirement** — an established coin breaking out qualifies just as easily as a brand-new one. Default every 10 min |
+| `/breakout off` | Turn off recurring Breakout scans |
+| `/breakout now` | Run a Breakout scan immediately instead of waiting for the schedule -- if nothing fully qualifies, posts the single closest near-miss instead (clearly labeled, not a real alert) |
+| `/breakout history` | **One-off**: see how past Breakout alerts *actually* performed — same raw current-price-vs-logged-price evaluation `/degen history` uses, needs ~1 hour since firing |
 
 ## Notes and honest limitations
 
@@ -213,9 +217,9 @@ if you want a different role than whoever already has Manage Server.
   elsewhere in the score. Needs ~200 days of history to ever fire (the default fetch window was
   bumped from 120 to 250 days specifically for this) -- newer tickers without that much history
   just won't show it, same graceful "not enough data" behavior as every other indicator here.
-- **`/backtest`, `/alerts history`, `/discover history`, and `/degen history` are the only things
-  that actually validate this bot** — everything else is textbook indicator theory (or, for
-  `/degen`, momentum/liquidity heuristics) that sounds reasonable but has never been checked
+- **`/backtest`, `/alerts history`, `/discover history`, `/degen history`, and `/breakout history`
+  are the only things that actually validate this bot** — everything else is textbook indicator
+  theory (or, for `/degen`/`/breakout`, momentum/liquidity heuristics) that sounds reasonable but has never been checked
   against real outcomes. `/backtest` replays history fast but on necessarily small samples
   (a single ticker's fetched window rarely produces more than a handful of qualifying signals,
   given how selective the confidence filter is). `/alerts history` and `/discover history` are
@@ -228,12 +232,14 @@ if you want a different role than whoever already has Manage Server.
   shown in `/scan` would have been hit first, scoring the outcome at the stop price rather than
   the latest close if so (shown as "Stopped out: X/N" per verdict type). They can only do this for
   alerts fired after ATR started being logged alongside them — older log entries fall back to a
-  plain latest-price-vs-fired-price comparison. `/degen history` can't be stop-aware at all — no
-  daily candles exist for a token that's existed for hours, so there's no path to replay a stop
-  against; it's a plain current-DexScreener-price-vs-price-when-alerted comparison, and it explicitly
-  reports how many past alerts got excluded because DexScreener no longer returns that token at
-  all (almost always because it died or got rugged) — excluding those from the average makes the
-  win rate look better than reality, not worse, so that count is shown, not hidden.
+  plain latest-price-vs-fired-price comparison. `/degen history` and `/breakout history` can't be
+  stop-aware at all — no daily candles exist for either command's tokens (some are hours old, but
+  even the established ones `/breakout` finds have no candle history from DexScreener), so
+  there's no path to replay a stop against; both are a plain current-DexScreener-price-vs-price-
+  when-alerted comparison, and both explicitly report how many past alerts got excluded because
+  DexScreener no longer returns that token at all (almost always because it died or got rugged) —
+  excluding those from the average makes the win rate look better than reality, not worse, so that
+  count is shown, not hidden.
 - **`/shorts` can't fully automate posting to YouTube**: at the scheduled time (4pm and 8pm ET,
   both) the bot scans a sample of small/mid-cap crypto for the day's single biggest gainer/loser,
   renders the result as a 1080x1920 PNG (built as SVG server-side and rasterized with `sharp`, not
@@ -335,6 +341,19 @@ if you want a different role than whoever already has Manage Server.
   a near-miss that fails the risk screen is skipped for the next-best one instead. Deliberately
   scoped to `/degen now` only, not the scheduled scans -- an automatic "closest, still failed"
   post every few minutes would spam and defeat the point of the filter.
+- **`/breakout` is `/degen` without the "must be new" requirement**: same liquidity/market-cap/
+  buy-pressure/momentum bar and RugCheck risk screen (`meetsTradingCriteria`/`checkRisk` in
+  `degen.js`, reused as-is by `breakout.js`), but candidates come from Raydium's public pool-list
+  API (`api-v3.raydium.io`, free, no key) sorted by 24h volume instead of DexScreener's "newest
+  profiles" feed, and there's no age cutoff at all. This exists because "not new" isn't actually a
+  reason a real breakout should be ignored -- confirmed against live data: a real run surfaced a
+  coin 267 days old with a RugCheck score of 1/100 as the closest near-miss, something `/degen`
+  structurally cannot see (its DexScreener feed only ever contains the last ~15-30 minutes of
+  newly-submitted token profiles). Raydium's API caps a single page at 1000 pools -- already deep
+  enough to reach ~$20-30K-TVL, low-thousands-a-day-volume pools by the bottom of that page, but
+  it is still one page, not literally every Solana pool that exists. `/breakout` and `/degen` track
+  alerted addresses and history completely separately, so the same coin can legitimately surface
+  on both if it qualifies for each independently.
 - **No real order execution**: `/portfolio` simulates trading (see below), but it is not
   connected to any brokerage and never risks real money. Turning this into real automated
   trades would require a brokerage API (e.g. Alpaca, Interactive Brokers), real capital at risk

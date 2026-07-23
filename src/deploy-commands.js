@@ -120,6 +120,19 @@ const commands = [
     .addSubcommand(sc => sc.setName("history").setDescription("See how past Degen alerts actually performed (needs ~1 hour since they fired)")),
 
   new SlashCommandBuilder()
+    .setName("breakout")
+    .setDescription("HIGH RISK: any Solana pair (not just new) passing liquidity/buy-pressure + RugCheck (unvalidated)")
+    .setDefaultMemberPermissions(MANAGE_GUILD_ONLY)
+    .addSubcommand(sc =>
+      sc.setName("on").setDescription("Turn on recurring Breakout scans")
+        .addChannelOption(o => o.setName("channel").setDescription("Channel to post qualifying pairs in").setRequired(true))
+        .addIntegerOption(o => o.setName("interval_minutes").setDescription("How often to scan, in minutes, min 2 (default 10)").setRequired(false))
+    )
+    .addSubcommand(sc => sc.setName("off").setDescription("Turn off recurring Breakout scans"))
+    .addSubcommand(sc => sc.setName("now").setDescription("Run a Breakout scan right now instead of waiting for the schedule"))
+    .addSubcommand(sc => sc.setName("history").setDescription("See how past Breakout alerts actually performed (needs ~1 hour since they fired)")),
+
+  new SlashCommandBuilder()
     .setName("portfolio")
     .setDescription("Simulated paper-trading portfolio driven by this bot's own signals (no real money)")
     .addSubcommand(sc =>

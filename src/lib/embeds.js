@@ -100,14 +100,22 @@ function formatDexScreenerVolume(usd) {
   return `$${usd.toFixed(0)}`;
 }
 
-// Shared per-candidate field content for both degenEmbed (real alerts) and degenClosestEmbed
-// (the "nothing qualified, here's the closest" fallback) -- same underlying data, just framed
-// differently in the embed around it. extraLine is appended last (used for shortfalls).
+// /degen's candidates are almost always well under 48h old, where hours read naturally; /breakout
+// has no age cutoff at all, so the same field needs to read sensibly for a coin that's months old.
+function formatAge(pairCreatedAt) {
+  if (!pairCreatedAt) return "?";
+  const hours = (Date.now() - pairCreatedAt) / 3600000;
+  return hours < 48 ? `${hours.toFixed(1)}h` : `${(hours / 24).toFixed(0)}d`;
+}
+
+// Shared per-candidate field content for /degen and /breakout's real-alert and closest-match
+// embeds alike -- same underlying DexScreener pair shape either way, just framed differently in
+// the embed around it. extraLine is appended last (used for shortfalls).
 function formatDegenField(pair, extraLine = "") {
   const symbol = pair.baseToken?.symbol || "?";
   const h1 = pair.txns?.h1 || { buys: 0, sells: 0 };
   const ratio = h1.sells > 0 ? (h1.buys / h1.sells).toFixed(1) : "∞";
-  const ageHours = pair.pairCreatedAt ? ((Date.now() - pair.pairCreatedAt) / 3600000).toFixed(1) : "?";
+  const age = formatAge(pair.pairCreatedAt);
   const report = pair.riskReport;
   // Read the actual authority state rather than assuming "renounced" -- true today only
   // because checkRisk() already filtered out anything where it wasn't, but this line
@@ -127,7 +135,7 @@ function formatDegenField(pair, extraLine = "") {
     name: `${symbol} · ${formatMoney(parseFloat(pair.priceUsd) || 0)}`,
     value: `Liquidity: ${formatDexScreenerVolume(pair.liquidity?.usd || 0)} · ` +
       `Market cap: ${formatDexScreenerVolume(pair.marketCap || 0)} · ` +
-      `1h buys/sells: ${h1.buys}/${h1.sells} (${ratio}×)${changeLine} · Age: ${ageHours}h${riskLine}${extraLine}\n` +
+      `1h buys/sells: ${h1.buys}/${h1.sells} (${ratio}×)${changeLine} · Age: ${age}${riskLine}${extraLine}\n` +
       `[View on DexScreener](${pair.url})`,
     inline: false
   };
@@ -176,6 +184,84 @@ function degenClosestEmbed(pair) {
     ? `\nShortfalls: ${pair.shortfalls.join("; ")}`
     : "";
   embed.addFields(formatDegenField(pair, shortfalls));
+  return embed;
+}
+
+// /breakout: same trading-criteria + RugCheck bar as /degen (see degen.js's meetsTradingCriteria/
+// checkRisk, reused as-is by breakout.js), sourced from Raydium's volume-ranked pool list instead
+// of DexScreener's newest-pairs feed, and deliberately with no age requirement -- an established
+// coin breaking out is exactly what this command is for, so the framing below never claims "new."
+function breakoutEmbed(candidates) {
+  const embed = new EmbedBuilder()
+    .setTitle("🚀 Breakout — Solana Momentum (High Risk)")
+    .setColor(0xf5a623)
+    .setThumbnail("attachment://logo.png")
+    .setFooter({
+      text: "UNVALIDATED, HIGH RISK: not necessarily a new coin -- sourced from Raydium's volume-ranked " +
+        "pool list, screened against the same liquidity/buy-pressure/market-cap/momentum bar and " +
+        "RugCheck-based risk screen as /degen, just without an age requirement. Neither is a guarantee " +
+        "against rugs, honeypots, or wash-traded volume. This can never be backtested the way /backtest " +
+        "validates everything else -- there's no history to replay. Not financial advice."
+    })
+    .setTimestamp();
+
+  candidates.forEach(pair => embed.addFields(formatDegenField(pair)));
+  return embed;
+}
+
+// The /breakout now fallback when nothing actually clears the bar -- same visual language as
+// degenClosestEmbed (distinct gray color, explicit "did not qualify" framing) so it can never be
+// mistaken for a real alert.
+function breakoutClosestEmbed(pair) {
+  const embed = new EmbedBuilder()
+    .setTitle("🔍 Breakout — Closest Match (Did Not Clear the Bar)")
+    .setColor(0x6b7280)
+    .setThumbnail("attachment://logo.png")
+    .setFooter({
+      text: "This did NOT pass the real filters -- it's just the closest candidate this scan found. " +
+        "Still passed the RugCheck risk screen, but the gaps below are real. Not an alert, not a recommendation."
+    })
+    .setTimestamp();
+
+  const shortfalls = pair.shortfalls?.length
+    ? `\nShortfalls: ${pair.shortfalls.join("; ")}`
+    : "";
+  embed.addFields(formatDegenField(pair, shortfalls));
+  return embed;
+}
+
+// Same shape as degenHistoryEmbed -- no verdict to group by, no stop-loss simulation possible
+// (no intraday path data), and excluded (no-longer-returned-by-DexScreener) alerts are surfaced
+// as a count rather than silently dropped, since dropping them biases the win rate optimistic.
+function breakoutHistoryEmbed(evaluated, excludedCount) {
+  const embed = new EmbedBuilder()
+    .setTitle("🚀 Breakout History — Real Performance")
+    .setColor(0x8a63d2)
+    .setThumbnail("attachment://logo.png")
+    .setTimestamp();
+
+  const wins = evaluated.filter(e => e.returnPct > 0).length;
+  const winRate = (wins / evaluated.length) * 100;
+  const avgReturn = evaluated.reduce((a, e) => a + e.returnPct, 0) / evaluated.length;
+  const sorted = [...evaluated].sort((a, b) => b.returnPct - a.returnPct);
+  const best = sorted[0];
+  const worst = sorted[sorted.length - 1];
+
+  embed.addFields({
+    name: `${evaluated.length} alert(s) evaluated`,
+    value:
+      `Win rate: ${winRate.toFixed(0)}% · Avg return: ${avgReturn >= 0 ? "+" : ""}${avgReturn.toFixed(1)}%\n` +
+      `Best: ${best.symbol} ${best.returnPct >= 0 ? "+" : ""}${best.returnPct.toFixed(1)}% · ` +
+      `Worst: ${worst.symbol} ${worst.returnPct >= 0 ? "+" : ""}${worst.returnPct.toFixed(1)}%`,
+    inline: false
+  });
+
+  const excludedNote = excludedCount > 0
+    ? `${excludedCount} logged alert(s) excluded -- DexScreener no longer returns them, almost always because the token died or got rugged, which means this win rate likely skews optimistic, not pessimistic. `
+    : "";
+  embed.setFooter({
+    text: `${excludedNote}Raw price-then vs. price-now -- no stop-loss simulation (no intraday path data exists to check one against). High risk, unvalidated. Not financial advice.`
+  });
   return embed;
 }
 
@@ -376,5 +462,6 @@ function shortsEmbed(winner, loser, label, imageFilename) {
 module.exports = {
   scanEmbed, alertEmbed, discoverEmbed, degenEmbed, degenClosestEmbed, volatilityEmbed, backtestEmbed,
   alertHistoryEmbed, discoverHistoryEmbed, degenHistoryEmbed, portfolioEmbed,
+  breakoutEmbed, breakoutClosestEmbed, breakoutHistoryEmbed,
   shortsEmbed, logoAttachment, VERDICT_COLOR
 };

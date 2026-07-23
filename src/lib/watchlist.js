@@ -316,6 +316,62 @@ function allGuildsWithDegenSchedule() {
   return Object.entries(all).filter(([, g]) => g.degenSchedule);
 }
 
+// /breakout's own bucket for everything /degen has -- alerted-address tracking, alert history,
+// and schedule config -- kept entirely separate from degen's own guild.degenAlerted/
+// degenAlertHistory/degenSchedule so the two commands' state (and re-alert suppression) never
+// cross-contaminate, even though both can surface the same token independently.
+const MAX_BREAKOUT_ALERTED = 500;
+function getBreakoutAlerted(guildId) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  return guild.breakoutAlerted || [];
+}
+
+function addBreakoutAlerted(guildId, addresses) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.breakoutAlerted = [...new Set([...(guild.breakoutAlerted || []), ...addresses])].slice(-MAX_BREAKOUT_ALERTED);
+  saveAll(all);
+}
+
+const MAX_BREAKOUT_ALERT_HISTORY = 200;
+function logBreakoutAlert(guildId, address, symbol, price, url) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.breakoutAlertHistory = guild.breakoutAlertHistory || [];
+  guild.breakoutAlertHistory.push({ address, symbol, price, url, timestamp: Date.now() });
+  if (guild.breakoutAlertHistory.length > MAX_BREAKOUT_ALERT_HISTORY) {
+    guild.breakoutAlertHistory = guild.breakoutAlertHistory.slice(-MAX_BREAKOUT_ALERT_HISTORY);
+  }
+  saveAll(all);
+}
+
+function getBreakoutAlertHistory(guildId) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  return guild.breakoutAlertHistory || [];
+}
+
+function setBreakoutSchedule(guildId, config) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.breakoutSchedule = config;
+  saveAll(all);
+  return guild.breakoutSchedule;
+}
+
+function markBreakoutRun(guildId, timestamp) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  if (guild.breakoutSchedule) guild.breakoutSchedule.lastRun = timestamp;
+  saveAll(all);
+}
+
+function allGuildsWithBreakoutSchedule() {
+  const all = loadAll();
+  return Object.entries(all).filter(([, g]) => g.breakoutSchedule);
+}
+
 // Every fired alert gets logged here so /alerts history can check back later on what the price
 // actually did -- real forward performance, not a simulation. Capped so this can't grow forever.
 const MAX_ALERT_HISTORY = 200;
@@ -423,6 +479,8 @@ module.exports = {
   setDiscoverSchedule, markDiscoverRun, allGuildsWithDiscoverSchedule,
   getDegenAlerted, addDegenAlerted, setDegenSchedule, markDegenRun, allGuildsWithDegenSchedule,
   logDegenAlert, getDegenAlertHistory,
+  getBreakoutAlerted, addBreakoutAlerted, setBreakoutSchedule, markBreakoutRun, allGuildsWithBreakoutSchedule,
+  logBreakoutAlert, getBreakoutAlertHistory,
   getPortfolio, startPortfolio, savePortfolio, resetPortfolio,
   normalizeSymbol, isValidTicker, isCryptoTicker
 };

@@ -61,7 +61,11 @@ function isTooOld(pair) {
   return (Date.now() - pair.pairCreatedAt) / (1000 * 60 * 60) > MAX_PAIR_AGE_HOURS;
 }
 
-function qualifies(pair) {
+// Everything /degen actually screens for EXCEPT age -- split out so /breakout (same liquidity/
+// market-cap/buy-pressure/momentum/RugCheck bar, but deliberately no "must be new" requirement)
+// can reuse the identical trading-criteria logic without inheriting the age cutoff too. The specs
+// are the specs regardless of how old the coin is; only /degen cares about newness specifically.
+function meetsTradingCriteria(pair) {
   if (!pair) return false;
   // Only enforce the liquidity floor on tokens that actually have a pool to measure; bonding-
   // curve tokens still have to clear market cap, buy pressure, price momentum, and the RugCheck
@@ -80,9 +84,11 @@ function qualifies(pair) {
   const m5Change = pair.priceChange?.m5;
   if (m5Change != null && m5Change < MAX_M5_PRICE_DROP_PCT) return false;
 
-  if (isTooOld(pair)) return false;
-
   return true;
+}
+
+function qualifies(pair) {
+  return meetsTradingCriteria(pair) && !isTooOld(pair);
 }
 
 // 0-1 "how close is this to qualifying" score across the soft (continuous) criteria, taking the
@@ -245,5 +251,8 @@ module.exports = {
   findDegenCandidates,
   MIN_LIQUIDITY_USD, MIN_MARKET_CAP_USD, MIN_BUY_SELL_RATIO, MIN_H1_TXNS, MAX_PAIR_AGE_HOURS,
   MIN_H1_PRICE_CHANGE_PCT, MAX_M5_PRICE_DROP_PCT,
-  MAX_RUGCHECK_SCORE, MAX_TOP_HOLDER_PCT
+  MAX_RUGCHECK_SCORE, MAX_TOP_HOLDER_PCT,
+  // Exposed for /breakout (src/lib/breakout.js) to reuse the exact same qualification and risk-
+  // screen logic against a different (not-age-restricted) candidate source.
+  meetsTradingCriteria, pickBestPair, checkRisk, closenessScore, describeShortfalls
 };

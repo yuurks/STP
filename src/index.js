@@ -11,10 +11,12 @@ const portfolioLib = require("./lib/portfolio");
 const shorts = require("./lib/shorts");
 const degen = require("./lib/degen");
 const { findDegenCandidates } = degen;
+const { findBreakoutCandidates } = require("./lib/breakout");
 const { fetchTokenTradingData } = require("./lib/dexscreener");
 const {
   scanEmbed, alertEmbed, discoverEmbed, degenEmbed, degenClosestEmbed, volatilityEmbed, backtestEmbed,
-  alertHistoryEmbed, discoverHistoryEmbed, degenHistoryEmbed, portfolioEmbed, shortsEmbed, logoAttachment
+  alertHistoryEmbed, discoverHistoryEmbed, degenHistoryEmbed, portfolioEmbed, shortsEmbed, logoAttachment,
+  breakoutEmbed, breakoutClosestEmbed, breakoutHistoryEmbed
 } = require("./lib/embeds");
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -325,18 +327,21 @@ async function runDiscoverScan(guildId, channel) {
   return fired;
 }
 
-// Degen alerts move on the scale of minutes/hours, not the multi-day cadence /alerts and
-// /discover need for a daily candle to even exist -- an hour is enough for DexScreener's price
-// to have actually moved since the alert fired.
-const DEGEN_EVAL_MIN_AGE_MS = 60 * 60 * 1000;
+// Degen/Breakout alerts move on the scale of minutes/hours, not the multi-day cadence /alerts
+// and /discover need for a daily candle to even exist -- an hour is enough for DexScreener's
+// price to have actually moved since the alert fired. Shared by both since the reasoning (raw
+// DexScreener snapshot, no candles) is identical either way.
+const DEX_EVAL_MIN_AGE_MS = 60 * 60 * 1000;
 
 // No daily candles exist for these tokens (see dexscreener.js), so this can't replay a stop-loss
 // path like runAlertHistory does -- just current DexScreener price vs. the price logged at alert
 // time. A token DexScreener no longer returns at all is excluded from the average (can't compute
 // a return with no current price), not scored as a loss -- but that's very likely undercounting
 // real losses (dead liquidity/rugged tokens are exactly the ones DexScreener stops returning), so
-// the excluded count is surfaced in the embed rather than silently dropped.
-async function runDegenHistory(channel, eligible) {
+// the excluded count is surfaced in the embed rather than silently dropped. Shared by /degen
+// history and /breakout history -- identical evaluation logic either way, just a different embed
+// and label for the "nothing could be evaluated" message.
+async function runDexScreenerHistory(channel, eligible, embedFn, label) {
   const addresses = [...new Set(eligible.map(h => h.address))];
   const currentByAddress = new Map();
   try {
@@ -349,8 +354,8 @@ async function runDegenHistory(channel, eligible) {
       if (!existing || liq > (existing.liquidity?.usd || 0)) currentByAddress.set(addr, pair);
     }
   } catch (err) {
-    console.error(`Degen history lookup failed: ${err.message}`);
-    await channel.send("Couldn't reach DexScreener to check past Degen alerts -- try again later.");
+    console.error(`${label} history lookup failed: ${err.message}`);
+    await channel.send(`Couldn't reach DexScreener to check past ${label} alerts -- try again later.`);
     return;
   }
 
@@ -368,13 +373,13 @@ async function runDegenHistory(channel, eligible) {
 
   if (!evaluated.length) {
     await channel.send(
-      `None of the ${eligible.length} eligible past Degen alert(s) could be evaluated -- DexScreener no ` +
+      `None of the ${eligible.length} eligible past ${label} alert(s) could be evaluated -- DexScreener no ` +
       "longer returns any of them (likely delisted/rugged/dead liquidity)."
     );
     return;
   }
 
-  await channel.send({ embeds: [degenHistoryEmbed(evaluated, excludedCount)], files: [logoAttachment()] });
+  await channel.send({ embeds: [embedFn(evaluated, excludedCount)], files: [logoAttachment()] });
 }
 
 // /degen scans DexScreener's rolling feed of newly-profiled Solana tokens for real liquidity +
@@ -396,6 +401,21 @@ async function runDegenScan(guildId, channel, { includeClosest = false } = {}) {
     await channel.send({ embeds: [degenEmbed(candidates)], files: [logoAttachment()] });
   } else if (closest) {
     await channel.send({ embeds: [degenClosestEmbed(closest)], files: [logoAttachment()] });
+  }
+  return { checked, candidates, closest };
+}
+
+async function runBreakoutScan(guildId, channel, { includeClosest = false } = {}) {
+  const alerted = new Set(watchlist.getBreakoutAlerted(guildId));
+  const { checked, candidates, closest } = await findBreakoutCandidates(alerted, { includeClosest });
+  if (candidates.length) {
+    watchlist.addBreakoutAlerted(guildId, candidates.map(c => c.baseToken.address));
+    for (const c of candidates) {
+      watchlist.logBreakoutAlert(guildId, c.baseToken.address, c.baseToken.symbol, parseFloat(c.priceUsd) || 0, c.url);
+    }
+    await channel.send({ embeds: [breakoutEmbed(candidates)], files: [logoAttachment()] });
+  } else if (closest) {
+    await channel.send({ embeds: [breakoutClosestEmbed(closest)], files: [logoAttachment()] });
   }
   return { checked, candidates, closest };
 }
@@ -551,6 +571,20 @@ client.once(Events.ClientReady, c => {
         await runDegenScan(guildId, channel);
       } catch (err) {
         console.error(`Degen scan failed for guild ${guildId}: ${err.message}`);
+      }
+    }
+
+    for (const [guildId, guildData] of watchlist.allGuildsWithBreakoutSchedule()) {
+      const { channelId, intervalMinutes, lastRun } = guildData.breakoutSchedule;
+      const due = !lastRun || now - lastRun >= intervalMinutes * 60 * 1000;
+      if (!due) continue;
+
+      watchlist.markBreakoutRun(guildId, now);
+      try {
+        const channel = await client.channels.fetch(channelId);
+        await runBreakoutScan(guildId, channel);
+      } catch (err) {
+        console.error(`Breakout scan failed for guild ${guildId}: ${err.message}`);
       }
     }
   }, 60 * 1000);
@@ -914,7 +948,7 @@ client.on(Events.InteractionCreate, async interaction => {
           });
         } else if (sub === "history") {
           const history = watchlist.getDegenAlertHistory(interaction.guildId);
-          const eligible = history.filter(h => Date.now() - h.timestamp >= DEGEN_EVAL_MIN_AGE_MS);
+          const eligible = history.filter(h => Date.now() - h.timestamp >= DEX_EVAL_MIN_AGE_MS);
 
           if (!history.length) {
             await interaction.reply({ content: "No Degen alerts have fired yet for this server.", ephemeral: true });
@@ -929,9 +963,67 @@ client.on(Events.InteractionCreate, async interaction => {
           }
 
           await interaction.reply(`Checking real performance of ${eligible.length} past Degen alert(s)...`);
-          runDegenHistory(interaction.channel, eligible).catch(err => {
+          runDexScreenerHistory(interaction.channel, eligible, degenHistoryEmbed, "Degen").catch(err => {
             console.error(`Degen history check failed for guild ${interaction.guildId}: ${err.message}`);
             interaction.channel.send("Degen history check failed partway through — check the bot logs.").catch(() => {});
+          });
+        }
+        break;
+      }
+
+      case "breakout": {
+        const sub = interaction.options.getSubcommand();
+        if (sub === "on") {
+          const channel = interaction.options.getChannel("channel");
+          const requested = interaction.options.getInteger("interval_minutes");
+          const intervalMinutes = Math.max(2, requested || 10);
+          watchlist.setBreakoutSchedule(interaction.guildId, { channelId: channel.id, intervalMinutes, lastRun: null });
+          await interaction.reply(
+            `Breakout on: every ${intervalMinutes} min, scanning Raydium's volume-ranked Solana pools (not ` +
+            "restricted to brand-new pairs) for real liquidity " +
+            `(≥$${degen.MIN_LIQUIDITY_USD.toLocaleString()}), market cap (≥$${degen.MIN_MARKET_CAP_USD.toLocaleString()}), real buy ` +
+            `pressure (≥${degen.MIN_BUY_SELL_RATIO}x buys/sells, ${degen.MIN_H1_TXNS}+ trades/hr), and confirmed price momentum ` +
+            `(≥${degen.MIN_H1_PRICE_CHANGE_PCT}% over 1h, not already dropping >${Math.abs(degen.MAX_M5_PRICE_DROP_PCT)}% in the last 5min) -- ` +
+            `then screened against known rug-pull patterns via RugCheck (mint/freeze authority, insider wallet clustering, ` +
+            `top-holder concentration >${degen.MAX_TOP_HOLDER_PCT}%) -- posting to ${channel} only when one clears all of it. ` +
+            "**High risk, unvalidated**: same screen as /degen, just without the age requirement -- an established coin " +
+            "breaking out can alert here just as easily as a new one. These filters reduce exposure to known bad patterns, " +
+            "they do not guarantee anything, and this can never be backtested (no historical candles exist for either " +
+            "command to replay). Not a prediction -- do your own research."
+          );
+        } else if (sub === "off") {
+          watchlist.setBreakoutSchedule(interaction.guildId, null);
+          await interaction.reply("Breakout schedule turned off.");
+        } else if (sub === "now") {
+          await interaction.reply("Running a Breakout scan now -- this is fast (Raydium + DexScreener, not Twelve Data), posting here when it's done.");
+          runBreakoutScan(interaction.guildId, interaction.channel, { includeClosest: true }).then(async ({ candidates, closest }) => {
+            if (!candidates.length && !closest) {
+              await interaction.channel.send("Breakout scan finished -- nothing cleared the bar, and no risk-screen-clean near-miss either this run.");
+            }
+          }).catch(err => {
+            console.error(`Manual breakout run failed for guild ${interaction.guildId}: ${err.message}`);
+            interaction.channel.send("Breakout scan failed partway through — check the bot logs.").catch(() => {});
+          });
+        } else if (sub === "history") {
+          const history = watchlist.getBreakoutAlertHistory(interaction.guildId);
+          const eligible = history.filter(h => Date.now() - h.timestamp >= DEX_EVAL_MIN_AGE_MS);
+
+          if (!history.length) {
+            await interaction.reply({ content: "No Breakout alerts have fired yet for this server.", ephemeral: true });
+            break;
+          }
+          if (!eligible.length) {
+            await interaction.reply({
+              content: `${history.length} Breakout alert(s) logged, but none are old enough yet to evaluate (needs ~1 hour since firing).`,
+              ephemeral: true
+            });
+            break;
+          }
+
+          await interaction.reply(`Checking real performance of ${eligible.length} past Breakout alert(s)...`);
+          runDexScreenerHistory(interaction.channel, eligible, breakoutHistoryEmbed, "Breakout").catch(err => {
+            console.error(`Breakout history check failed for guild ${interaction.guildId}: ${err.message}`);
+            interaction.channel.send("Breakout history check failed partway through — check the bot logs.").catch(() => {});
           });
         }
         break;
