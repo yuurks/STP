@@ -286,7 +286,7 @@ if you want a different role than whoever already has Manage Server.
   compete with any other feature's quota) -- but that API only exposes a live snapshot (current
   price, liquidity, and buy/sell counts over rolling 5m/1h/6h/24h windows), never historical
   candles. So `/degen` can't run the RSI/MACD/ADX engine at all -- it's a different model
-  entirely: liquidity (≥$5K), market cap (≥$50K), and real buy pressure (≥2x buys/sells over the
+  entirely: liquidity (≥$5K), market cap (≥$150K), and real buy pressure (≥2x buys/sells over the
   last hour, with a minimum trade count so the ratio isn't computed from a handful of trades),
   over a pair age under 48h (all in `src/lib/degen.js`). It scans DexScreener's rolling feed of
   newly-profiled Solana tokens (`/token-profiles/latest/v1`, filtered client-side to
@@ -300,17 +300,39 @@ if you want a different role than whoever already has Manage Server.
   get one more check via [RugCheck's free API](https://api.rugcheck.xyz/swagger/index.html) (no
   key, 3 req/sec, only called for the few candidates that already look promising, so this stays
   cheap): reject if RugCheck has already flagged the token as rugged, if mint or freeze authority
-  wasn't renounced (either lets the deployer inflate supply or freeze holder accounts), if
-  RugCheck detected a connected/insider wallet cluster, if RugCheck's own 0-100 risk score exceeds
-  50 (`MAX_RUGCHECK_SCORE` -- a judgment call, not a documented threshold; legitimate tokens
-  checked during development scored in the low single digits), or if any single wallet holds more
-  than 20% of supply (`MAX_TOP_HOLDER_PCT` -- catches concentration RugCheck's own score doesn't
-  always flag: a real copycat token found during testing held 42% in one wallet and still scored
-  as "safe"). Verified working end-to-end against live data: a token that passed every DexScreener
-  filter got correctly rejected by this screen for a detected insider wallet cluster. None of
-  this is a safety guarantee -- a coordinated team can pass every check here and still dump on
-  holders. Every alert links to the pair's DexScreener page so you can look at the actual
-  chart/holders yourself before doing anything -- treat that as mandatory, not optional.
+  wasn't renounced (either lets the deployer inflate supply or freeze holder accounts), if a small
+  connected/insider wallet cluster is detected, if RugCheck's own 0-100 risk score exceeds 50
+  (`MAX_RUGCHECK_SCORE` -- a judgment call, not a documented threshold; legitimate tokens checked
+  during development scored in the low single digits), if the top 5 real (non-pool) holders
+  combined control more than 40% of supply (`MAX_TOP5_HOLDER_PCT`), or if RugCheck flags a
+  "danger"-level large amount of unlocked LP. None of this is a safety guarantee -- a coordinated
+  team can pass every check here and still dump on holders. Every alert links to the pair's
+  DexScreener page so you can look at the actual chart/holders yourself before doing anything --
+  treat that as mandatory, not optional.
+- **The risk screen above replaced three real gaps, found and fixed after a run of rugged
+  alerts**: (1) it used to check only the single largest holder's percentage
+  (`MAX_TOP_HOLDER_PCT`, 20%) -- trivially evaded by a team splitting its allocation across a few
+  wallets, each individually under the threshold, a well-known evasion pattern, not a hypothetical
+  one; now sums the top 5 real holders combined. "Real" specifically excludes pool-owned addresses
+  -- confirmed against live data that a pump.fun bonding curve's own reserve can show up as the
+  "top holder" at 50%+ of supply, which is unsold inventory, not a whale, and would have rejected
+  nearly every un-migrated token by construction if left uncorrected. (2) it never looked at
+  RugCheck's LP-lock status at all -- confirmed against three real Raydium-listed tokens that all
+  carried a "danger"-level "Large Amount of LP Unlocked" flag (the liquidity provider can pull all
+  liquidity in one transaction, one of the most common real Solana rug mechanisms) while still
+  scoring low enough overall to pass the aggregate score check, since that one factor doesn't
+  dominate the score unless combined with others; now checked explicitly. (3) the insider-cluster
+  check (`report.graphInsidersDetected`) is a headcount, not a boolean -- treating any nonzero
+  count as disqualifying rejected almost anything with real organic transfer activity: confirmed
+  against live data that BONK's and WIF's largest detected "network" had 8,422 and 4,444 accounts
+  respectively (obviously just ordinary trading among hundreds of thousands of real holders, not a
+  coordinated clique), while genuine small clusters found on real fresh candidates were 5-18
+  accounts total; now only flags clusters at or below 50 accounts. `MIN_MARKET_CAP_USD` was also
+  raised from $50K to $150K, since a $50K-cap coin takes only a few thousand dollars to
+  manipulate -- enough to fake the buy-pressure and momentum signals on purpose. All three
+  thresholds (`MAX_TOP5_HOLDER_PCT`, the $150K floor, the 50-account cluster size) are judgment
+  calls verified against real examples during development, not documented industry standards --
+  adjust them if real-world results say otherwise.
 - **`/degen`'s filters check price direction, not just trade count**: a real alert once fired on
   a token whose transaction count favored buys while the price was already crashing (confirmed
   against the actual token's data: +more buy transactions than sell transactions in the same hour

@@ -928,7 +928,7 @@ client.on(Events.InteractionCreate, async interaction => {
             `pressure (≥${degen.MIN_BUY_SELL_RATIO}x buys/sells, ${degen.MIN_H1_TXNS}+ trades/hr), and confirmed price momentum ` +
             `(≥${degen.MIN_H1_PRICE_CHANGE_PCT}% over 1h, not already dropping >${Math.abs(degen.MAX_M5_PRICE_DROP_PCT)}% in the last 5min) -- ` +
             `then screened against known rug-pull patterns via RugCheck (mint/freeze authority, insider wallet clustering, ` +
-            `top-holder concentration >${degen.MAX_TOP_HOLDER_PCT}%) -- posting to ${channel} only when one clears all of it. ` +
+            `top-5-holder concentration >${degen.MAX_TOP5_HOLDER_PCT}% combined, unlocked-LP risk) -- posting to ${channel} only when one clears all of it. ` +
             "**High risk, unvalidated**: these filters reduce exposure to known bad patterns, they do not guarantee anything -- brand-new " +
             "pairs can still be rugged, honeypotted, wash-traded, or simply reverse right after the alert, and this can never be " +
             "backtested (no historical data exists for a token that's existed for hours). Not a prediction -- do your own research."
@@ -985,7 +985,7 @@ client.on(Events.InteractionCreate, async interaction => {
             `pressure (≥${degen.MIN_BUY_SELL_RATIO}x buys/sells, ${degen.MIN_H1_TXNS}+ trades/hr), and confirmed price momentum ` +
             `(≥${degen.MIN_H1_PRICE_CHANGE_PCT}% over 1h, not already dropping >${Math.abs(degen.MAX_M5_PRICE_DROP_PCT)}% in the last 5min) -- ` +
             `then screened against known rug-pull patterns via RugCheck (mint/freeze authority, insider wallet clustering, ` +
-            `top-holder concentration >${degen.MAX_TOP_HOLDER_PCT}%) -- posting to ${channel} only when one clears all of it. ` +
+            `top-5-holder concentration >${degen.MAX_TOP5_HOLDER_PCT}% combined, unlocked-LP risk) -- posting to ${channel} only when one clears all of it. ` +
             "**High risk, unvalidated**: same screen as /degen, just without the age requirement -- an established coin " +
             "breaking out can alert here just as easily as a new one. These filters reduce exposure to known bad patterns, " +
             "they do not guarantee anything, and this can never be backtested (no historical candles exist for either " +

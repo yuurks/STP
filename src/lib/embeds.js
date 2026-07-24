@@ -124,7 +124,7 @@ function formatDegenField(pair, extraLine = "") {
     ? "mint/freeze renounced" : "mint/freeze: check manually";
   const riskLine = report
     ? `\nRisk screen: score ${report.score_normalised ?? report.score ?? "?"}/100 · ` +
-      `top holder ${(report.topHolders?.[0]?.pct || 0).toFixed(1)}% · ${authorityLabel}`
+      `top 5 holders ${(pair.top5HolderPct || 0).toFixed(1)}% · ${authorityLabel}`
     : "";
   const h1Change = pair.priceChange?.h1;
   const m5Change = pair.priceChange?.m5;

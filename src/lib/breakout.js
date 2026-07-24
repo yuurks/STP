@@ -46,12 +46,12 @@ async function findBreakoutCandidates(alertedAddresses, { includeClosest = false
   const candidates = [];
   for (const pair of preQualified) {
     try {
-      const { passed, reason, report } = await checkRisk(pair.baseToken.address);
+      const { passed, reason, report, top5HolderPct } = await checkRisk(pair.baseToken.address);
       if (!passed) {
         console.error(`Breakout candidate rejected by risk screen: ${pair.baseToken.symbol} -- ${reason}`);
         continue;
       }
-      candidates.push({ ...pair, riskReport: report });
+      candidates.push({ ...pair, riskReport: report, top5HolderPct });
     } catch (err) {
       console.error(`Risk check failed for ${pair.baseToken.symbol}: ${err.message}`);
     }
@@ -62,9 +62,9 @@ async function findBreakoutCandidates(alertedAddresses, { includeClosest = false
     nearMisses.sort((a, b) => b.score - a.score);
     for (const { pair, score } of nearMisses.slice(0, 5)) {
       try {
-        const { passed, report } = await checkRisk(pair.baseToken.address);
+        const { passed, report, top5HolderPct } = await checkRisk(pair.baseToken.address);
         if (passed) {
-          closest = { ...pair, riskReport: report, closenessScore: score, shortfalls: describeShortfalls(pair) };
+          closest = { ...pair, riskReport: report, top5HolderPct, closenessScore: score, shortfalls: describeShortfalls(pair) };
           break;
         }
       } catch (err) {
