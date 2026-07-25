@@ -1,8 +1,10 @@
 # Signal Deck — Discord Bot
 
 A Discord version of the Signal Deck scanner: technical indicators (SMA, EMA, RSI, MACD,
-Bollinger Bands, ADX, Golden/Death Cross) blended into a composite Buy/Sell verdict, delivered
-as slash commands and optional scheduled posts in a channel.
+Bollinger Bands, ADX, Golden/Death Cross) blended into a composite Buy/Sell verdict, plus
+informational context (unfilled price gaps, a Wyckoff-style accumulation-phase heuristic) that
+doesn't affect the verdict but is surfaced alongside it -- delivered as slash commands and
+optional scheduled posts in a channel.
 
 It **posts signals only** — it never places real trades and isn't connected to any brokerage.
 
@@ -217,6 +219,25 @@ if you want a different role than whoever already has Manage Server.
   elsewhere in the score. Needs ~200 days of history to ever fire (the default fetch window was
   bumped from 120 to 250 days specifically for this) -- newer tickers without that much history
   just won't show it, same graceful "not enough data" behavior as every other indicator here.
+- **Accumulation-phase detection (`detectAccumulation` in `indicators.js`)**: a Wyckoff-style
+  heuristic for a sideways, low-volatility range that follows a real decline, where volume within
+  the range tilts toward up days -- selling pressure that looks like it's being absorbed rather
+  than continuing to push price down. This is a simplified approximation, not a full Wyckoff
+  schematic (no Spring/Sign-of-Strength/Last-Point-of-Support sub-phase detection): it requires a
+  ≥15% decline in the 20 days before the range, a range no wider than 25% top-to-bottom over the
+  last 20 days, up-day volume outweighing down-day volume by at least 1.1x within it, and the
+  latest close no more than 3% below the range low (a brief undercut that's about to reclaim the
+  range is still consistent with accumulation; a real breakdown is not). **Deliberately
+  informational only -- it never changes score or verdict.** Accumulation itself isn't a buy
+  signal in Wyckoff theory either; the breakout *out* of the range is, and that's already what the
+  EMA/MACD crossover checks in `scoreAt` catch. Shown as an extra line ("📦 Possible accumulation:
+  ...") alongside the gap-fill and suggested-stop lines in `/scan`, `/alerts`, `/discover`, and
+  `/watch autobuild`'s volatility scan -- context for a human to decide whether a range is worth
+  watching for a breakout, not a new trigger. All four thresholds are judgment calls, not
+  documented industry standards -- verified against synthetic data covering the detection case and
+  each rejection case (no prior decline, range too wide, no volume tilt, insufficient history, and
+  both sides of the spring tolerance), but not yet checked against real historical accumulation
+  patterns the way `/backtest` validates the core score.
 - **`/backtest`, `/alerts history`, `/discover history`, `/degen history`, and `/breakout history`
   are the only things that actually validate this bot** — everything else is textbook indicator
   theory (or, for `/degen`/`/breakout`, momentum/liquidity heuristics) that sounds reasonable but has never been checked

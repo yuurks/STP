@@ -278,6 +278,63 @@ function findUnfilledGap(rows) {
   return null;
 }
 
+// Wyckoff-style accumulation phase, approximated: a sideways, low-volatility range that follows
+// a real decline, where volume within the range tilts toward up days -- selling pressure looking
+// absorbed rather than continuing to push price down. This is a simplified heuristic, not a full
+// Wyckoff schematic (no Spring/Sign-of-Strength/Last-Point-of-Support sub-phase detection), and
+// deliberately informational only -- it does NOT feed into score/verdict. Accumulation itself
+// isn't a buy signal in Wyckoff theory either; the breakout OUT of the range is (already caught
+// by the EMA/MACD crossover checks in scoreAt). Flagging the range as "possible accumulation"
+// while treating it as a Buy would mean buying before the actual confirmation this bot's other
+// signals are built around.
+const ACCUMULATION_RANGE_DAYS = 20;
+const ACCUMULATION_PRIOR_LOOKBACK_DAYS = 20;
+// The range should follow a real markdown, not just sit mid-uptrend -- distinguishes basing-
+// after-a-decline from ordinary consolidation within an existing uptrend.
+const ACCUMULATION_MIN_PRIOR_DECLINE_PCT = 15;
+// "Sideways" -- a wider swing than this over the window isn't a range, it's still trending.
+const ACCUMULATION_MAX_RANGE_WIDTH_PCT = 25;
+// A Spring (brief undercut that reclaims the range low) is still consistent with accumulation;
+// sustained fresh lows are not -- allow a small buffer below the range low rather than a hard cutoff.
+const ACCUMULATION_SPRING_TOLERANCE_PCT = 3;
+// Up-day volume must meaningfully exceed down-day volume within the range -- the actual
+// "absorption" signature, not just quiet drift with no real buying interest either way.
+const ACCUMULATION_MIN_VOLUME_TILT = 1.1;
+
+function detectAccumulation(rows) {
+  const totalNeeded = ACCUMULATION_RANGE_DAYS + ACCUMULATION_PRIOR_LOOKBACK_DAYS;
+  if (rows.length < totalNeeded) return null;
+
+  const range = rows.slice(-ACCUMULATION_RANGE_DAYS);
+  const before = rows.slice(-totalNeeded, -ACCUMULATION_RANGE_DAYS);
+
+  const priorHigh = Math.max(...before.map(r => r.high));
+  const declinePct = ((priorHigh - range[0].close) / priorHigh) * 100;
+  if (declinePct < ACCUMULATION_MIN_PRIOR_DECLINE_PCT) return null;
+
+  const rangeHigh = Math.max(...range.map(r => r.high));
+  const rangeLow = Math.min(...range.map(r => r.low));
+  const rangeWidthPct = ((rangeHigh - rangeLow) / rangeLow) * 100;
+  if (rangeWidthPct > ACCUMULATION_MAX_RANGE_WIDTH_PCT) return null;
+
+  const last = range[range.length - 1];
+  if (last.close < rangeLow * (1 - ACCUMULATION_SPRING_TOLERANCE_PCT / 100)) return null;
+
+  let upVolume = 0, downVolume = 0;
+  for (let i = 1; i < range.length; i++) {
+    if (range[i].close >= range[i - 1].close) upVolume += range[i].volume;
+    else downVolume += range[i].volume;
+  }
+  const volumeTilt = downVolume > 0 ? upVolume / downVolume : (upVolume > 0 ? Infinity : 1);
+  if (volumeTilt < ACCUMULATION_MIN_VOLUME_TILT) return null;
+
+  return {
+    rangeLow, rangeHigh, rangeWidthPct, declinePct,
+    volumeTilt: Number.isFinite(volumeTilt) ? volumeTilt : null,
+    days: ACCUMULATION_RANGE_DAYS
+  };
+}
+
 // full pipeline: raw OHLC rows -> enriched rows + latest score/verdict/notes
 function analyze(rows) {
   const closes = rows.map(r => r.close);
@@ -316,7 +373,8 @@ function analyze(rows) {
   return {
     rows: enriched, ...filtered, last: enriched[n],
     volatility: volatility(closes), gap: findUnfilledGap(rows),
-    adx: adxData[n], atr: atr(rows, 14)[n], volumeSurgeRatio
+    adx: adxData[n], atr: atr(rows, 14)[n], volumeSurgeRatio,
+    accumulation: detectAccumulation(rows)
   };
 }
 
@@ -443,5 +501,5 @@ function selectDiversified(candidates, count, maxCorrelation = 0.7) {
 
 module.exports = {
   analyze, scoreAt, verdictFromScore, verdictSide, findUnfilledGap, backtest, atr, adx,
-  dailyReturns, correlation, avgDollarVolume, selectDiversified
+  dailyReturns, correlation, avgDollarVolume, selectDiversified, detectAccumulation
 };

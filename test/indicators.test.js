@@ -2,11 +2,32 @@ const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
 const {
   findUnfilledGap, atr, adx, backtest, scoreAt, analyze,
-  dailyReturns, correlation, avgDollarVolume, selectDiversified
+  dailyReturns, correlation, avgDollarVolume, selectDiversified, detectAccumulation
 } = require("../src/lib/indicators");
 
 function row(date, high, low, close, volume = 1000000) {
   return { date, open: (high + low) / 2, high, low, close, volume };
+}
+
+// 20 days declining from `declineFrom` to `declineTo`, then 20 days oscillating between
+// `rangeLow` and `rangeHigh` with up-days getting `upVolume` and down-days `downVolume` --
+// the shape detectAccumulation is looking for (real prior markdown + sideways range + up-volume
+// tilt).
+function buildAccumulationSeries({
+  declineFrom = 150, declineTo = 100, rangeLow = 95, rangeHigh = 100, upVolume = 3000, downVolume = 1000
+} = {}) {
+  const rows = [];
+  for (let i = 0; i < 20; i++) {
+    const t = i / 19;
+    const close = declineFrom - t * (declineFrom - declineTo);
+    rows.push(row(`pre${i}`, close + 1, close - 1, close, 1000));
+  }
+  for (let i = 0; i < 20; i++) {
+    const isUpDay = i % 2 === 0;
+    const close = isUpDay ? rangeHigh : rangeLow;
+    rows.push(row(`range${i}`, close + 0.5, close - 0.5, close, isUpDay ? upVolume : downVolume));
+  }
+  return rows;
 }
 
 describe("findUnfilledGap", () => {
@@ -147,6 +168,55 @@ describe("scoreAt - Golden Cross / Death Cross", () => {
     const rows = [enriched(95, null), enriched(101, null)];
     const { notes } = scoreAt(rows, 1);
     assert.ok(!notes.some(n => n.includes("Cross")));
+  });
+});
+
+describe("detectAccumulation", () => {
+  test("detects a real range after a decline with an up-volume tilt", () => {
+    const rows = buildAccumulationSeries();
+    const result = detectAccumulation(rows);
+    assert.ok(result, "expected accumulation to be detected");
+    assert.ok(result.declinePct > 15);
+    assert.ok(result.rangeWidthPct < 25);
+    assert.ok(result.volumeTilt > 1.1);
+  });
+
+  test("returns null when there was no real prior decline (mid-uptrend consolidation)", () => {
+    // Same sideways range, but preceded by a flat/rising series instead of a decline.
+    const rows = buildAccumulationSeries({ declineFrom: 100, declineTo: 100 });
+    assert.equal(detectAccumulation(rows), null);
+  });
+
+  test("returns null when the range is too wide to call sideways", () => {
+    const rows = buildAccumulationSeries({ rangeLow: 50, rangeHigh: 100 });
+    assert.equal(detectAccumulation(rows), null);
+  });
+
+  test("returns null when volume doesn't tilt toward up days", () => {
+    // Down days getting MORE volume than up days -- distribution, not accumulation.
+    const rows = buildAccumulationSeries({ upVolume: 1000, downVolume: 3000 });
+    assert.equal(detectAccumulation(rows), null);
+  });
+
+  test("returns null with too little history", () => {
+    const rows = buildAccumulationSeries().slice(-30); // under the 40-bar minimum
+    assert.equal(detectAccumulation(rows), null);
+  });
+
+  test("tolerates the last close dipping slightly below the range low (a brief spring)", () => {
+    const rows = buildAccumulationSeries();
+    // This series' range low ends up ~94.5 -- 93 is a real undercut but within the 3% spring
+    // tolerance (94.5 * 0.97 ~= 91.7), so it should still count as accumulation.
+    const last = rows[rows.length - 1];
+    rows[rows.length - 1] = { ...last, close: 93 };
+    assert.ok(detectAccumulation(rows), "expected a brief spring to still count as accumulation");
+  });
+
+  test("returns null when the last close breaks meaningfully below the range low", () => {
+    const rows = buildAccumulationSeries();
+    const last = rows[rows.length - 1];
+    rows[rows.length - 1] = { ...last, close: 80 }; // well past the 3% spring tolerance
+    assert.equal(detectAccumulation(rows), null);
   });
 });
 

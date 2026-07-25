@@ -35,6 +35,16 @@ function stopLossLine(r) {
   return `\nSuggested stop (2x ATR): ${formatMoney(Math.max(0, stopPrice))}`;
 }
 
+// Informational only, same as gapLine/stopLossLine -- accumulation is a setup, not a trigger
+// (see detectAccumulation in indicators.js), so this never changes score/verdict, just surfaces
+// the range for a human to decide whether it's worth watching for a breakout.
+function accumulationLine(accumulation) {
+  if (!accumulation) return "";
+  const tiltNote = accumulation.volumeTilt != null ? `, ${accumulation.volumeTilt.toFixed(1)}x up-volume tilt` : "";
+  return `\n📦 Possible accumulation: ${accumulation.days}d range ${formatMoney(accumulation.rangeLow)}-${formatMoney(accumulation.rangeHigh)} ` +
+    `after a ${accumulation.declinePct.toFixed(0)}% decline${tiltNote}`;
+}
+
 function scanEmbed(results) {
   const sorted = [...results].sort((a, b) => b.score - a.score);
   const embed = new EmbedBuilder()
@@ -47,7 +57,7 @@ function scanEmbed(results) {
   sorted.slice(0, 25).forEach(r => {
     embed.addFields({
       name: `${r.symbol} · ${formatMoney(r.last.close)} — ${r.verdict}`,
-      value: `Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}${stopLossLine(r)}`,
+      value: `Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}${stopLossLine(r)}${accumulationLine(r.accumulation)}`,
       inline: false
     });
   });
@@ -66,7 +76,7 @@ function alertEmbed(fired) {
   fired.forEach(r => {
     embed.addFields({
       name: `${r.symbol} · ${formatMoney(r.last.close)} — ${r.verdict}`,
-      value: `Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}${stopLossLine(r)}`,
+      value: `Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}${stopLossLine(r)}${accumulationLine(r.accumulation)}`,
       inline: false
     });
   });
@@ -86,7 +96,7 @@ function discoverEmbed(fired) {
     const surgeNote = r.volumeSurgeRatio ? ` · ${r.volumeSurgeRatio.toFixed(1)}× normal volume` : "";
     embed.addFields({
       name: `${r.symbol} · ${formatMoney(r.last.close)} — ${r.verdict}`,
-      value: `Score ${r.score >= 0 ? "+" : ""}${r.score}${surgeNote} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}${stopLossLine(r)}`,
+      value: `Score ${r.score >= 0 ? "+" : ""}${r.score}${surgeNote} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}${stopLossLine(r)}${accumulationLine(r.accumulation)}`,
       inline: false
     });
   });
@@ -277,7 +287,7 @@ function volatilityEmbed(results) {
   sorted.slice(0, 25).forEach(r => {
     embed.addFields({
       name: `${r.symbol} · ${formatMoney(r.last.close)} — ${r.volatility.toFixed(1)}% daily volatility`,
-      value: `${r.verdict} · Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}${stopLossLine(r)}`,
+      value: `${r.verdict} · Score ${r.score >= 0 ? "+" : ""}${r.score} · ${r.notes.slice(0, 2).join(" · ") || "No strong signals"}${gapLine(r.gap)}${stopLossLine(r)}${accumulationLine(r.accumulation)}`,
       inline: false
     });
   });
