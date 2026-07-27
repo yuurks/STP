@@ -60,17 +60,21 @@ function evaluateStopAware(entry, rows) {
   };
 }
 
-// Granularity scales with how long ago the call fired -- a call from a few hours ago gets fine
-// detail (5-min bars), a multi-day-old one gets coarser bars wide enough to actually still
-// contain the entry, rather than one fixed window that's either too sparse for a recent call or
-// too narrow to reach back far enough for an old one. Only combos confirmed live against
-// GeckoTerminal's real API (minute bars: 1/5/15 only -- 30 returns 400; hour bars: 1). Each
-// window is sized at ~4x the call's actual age, not just barely covering it, so there's real
-// context on both sides of the entry marker rather than it sitting right at the edge.
+// Granularity scales with how long ago the call fired -- a call from the last few hours gets
+// the finest real detail GeckoTerminal offers (1-min bars), a multi-day-old one gets coarser bars
+// wide enough to actually still contain the entry, rather than one fixed window that's either too
+// sparse for a recent call or too narrow to reach back far enough for an old one. Only combos
+// confirmed live against GeckoTerminal's real API (minute bars: 1/5/15 only -- 30 returns 400;
+// hour bars: 1). Each window is sized well past the call's actual age, not just barely covering
+// it, so there's real context on both sides of the entry marker rather than it sitting right at
+// the edge. resampleOhlc below still caps what actually gets rendered (see MAX_RENDERED_CANDLES)
+// -- fetching finer than that isn't wasted, it just means a young pool with under 48 real candles
+// (the common case right after a call becomes eligible) shows all of what genuinely exists
+// instead of being needlessly bucketed into fewer, coarser candles.
 function pickGranularity(ageMs) {
   const ageHours = ageMs / 3600000;
-  if (ageHours <= 2) return { timeframe: "minute", aggregate: 5, limit: 96 };   // 8h window
-  if (ageHours <= 12) return { timeframe: "minute", aggregate: 15, limit: 192 }; // 48h window
+  if (ageHours <= 4) return { timeframe: "minute", aggregate: 1, limit: 240 };  // ~4h window
+  if (ageHours <= 24) return { timeframe: "minute", aggregate: 5, limit: 288 }; // 24h window
   if (ageHours <= 96) return { timeframe: "hour", aggregate: 1, limit: 384 };   // 16d window
   return { timeframe: "hour", aggregate: 1, limit: 500 }; // GeckoTerminal's practical max for hourly
 }

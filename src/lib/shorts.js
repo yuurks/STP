@@ -261,13 +261,17 @@ function chartFrame(x, y, w, h, min, max) {
 }
 
 // entryIndex/entryPriceRaw locate the actual buy entry on the chart (see bestCall.js) -- drawn
-// as a distinct unfilled ring + "BUY" tag, never the same solid dot used for "now", so the two
-// are never confused for each other at a glance.
-function entryMarkerSvg(entryX, entryY, accent) {
+// as a distinct unfilled ring + "BUY" tag in a fixed red, always, regardless of the card's own
+// accent color (which is always green here since every /shorts highlight is a winner) -- so the
+// entry marker reads as its own fixed visual language ("this is where you bought") rather than
+// blending into whatever color the rest of the card happens to use, and is never the same solid
+// dot used for "now."
+function entryMarkerSvg(entryX, entryY) {
+  const color = COLORS.loser;
   return (
-    `<circle cx="${entryX.toFixed(1)}" cy="${entryY.toFixed(1)}" r="13" fill="none" stroke="${accent}" stroke-width="3"/>` +
-    `<circle cx="${entryX.toFixed(1)}" cy="${entryY.toFixed(1)}" r="4" fill="${accent}"/>` +
-    `<text x="${entryX.toFixed(1)}" y="${(entryY - 20).toFixed(1)}" font-family="STPSans" font-size="17" font-weight="800" letter-spacing="0.5" fill="${accent}" text-anchor="middle">BUY</text>`
+    `<circle cx="${entryX.toFixed(1)}" cy="${entryY.toFixed(1)}" r="13" fill="none" stroke="${color}" stroke-width="3"/>` +
+    `<circle cx="${entryX.toFixed(1)}" cy="${entryY.toFixed(1)}" r="4" fill="${color}"/>` +
+    `<text x="${entryX.toFixed(1)}" y="${(entryY - 20).toFixed(1)}" font-family="STPSans" font-size="17" font-weight="800" letter-spacing="0.5" fill="${color}" text-anchor="middle">BUY</text>`
   );
 }
 
@@ -284,14 +288,14 @@ function cardSvg({ x, y, w, h, accent, accentFill, tagLabel, ticker, pctChange, 
   const frame = useCandles
     ? (() => {
         const c = candlePaths(ohlc, chartX, chartY, chartW, chartH, entryIndex, entryPriceRaw);
-        return { ...c, draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max) + c.candles + (showEntryMarker ? entryMarkerSvg(c.entryX, c.entryY, accent) : "") };
+        return { ...c, draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max) + c.candles + (showEntryMarker ? entryMarkerSvg(c.entryX, c.entryY) : "") };
       })()
     : (() => { const c = chartPaths(closes, chartX, chartY, chartW, chartH); return {
         ...c,
         draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max) +
           `<path d="${c.area}" fill="${accentFill}"/>` +
           `<path d="${c.line}" fill="none" stroke="${accent}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>` +
-          (showEntryMarker ? entryMarkerSvg(c.entryX, c.entryY, accent) : "") +
+          (showEntryMarker ? entryMarkerSvg(c.entryX, c.entryY) : "") +
           `<circle cx="${c.lastX.toFixed(1)}" cy="${c.lastY.toFixed(1)}" r="9" fill="${accent}"/>`
       }; })();
 
