@@ -95,6 +95,31 @@ function formatMetaLine(times) {
 
 const TEMPLATE_PATH = path.join(__dirname, "..", "..", "scripts", "movers-short.template.html");
 const LOGO_PATH = path.join(__dirname, "..", "..", "assets", "logo.png");
+const FONTS_DIR = path.join(__dirname, "..", "..", "assets", "fonts");
+
+// Rendering these SVGs relies on `sharp`'s bundled librsvg finding an actual font file to draw
+// text with, matched by font-family name through its bundled fontconfig -- fontconfig itself
+// ships with sharp, but it still has to find real font FILES on the host to match against, and a
+// minimal deploy container (confirmed on Railway) can have none installed at all, so text without
+// this comes out as tofu boxes there even though it renders fine on a normal dev machine with
+// real system fonts. Embedding the font's actual bytes as a base64 @font-face makes rendering
+// depend only on this file, never on the host -- verified end-to-end against this exact sharp
+// version. DejaVu Sans/Sans-Mono: public domain-derived (Bitstream Vera + public domain
+// additions), fully redistributable, excellent Unicode coverage (confirmed: →, ·, × all render).
+let fontDefsCache = null;
+function fontDefs() {
+  if (fontDefsCache) return fontDefsCache;
+  const toBase64 = name => fs.readFileSync(path.join(FONTS_DIR, name)).toString("base64");
+  fontDefsCache = `<defs><style>
+    @font-face { font-family: "STPSans"; font-weight: 400; src: url(data:font/ttf;base64,${toBase64("DejaVuSans.ttf")}); }
+    @font-face { font-family: "STPSans"; font-weight: 600; src: url(data:font/ttf;base64,${toBase64("DejaVuSans-Bold.ttf")}); }
+    @font-face { font-family: "STPSans"; font-weight: 700; src: url(data:font/ttf;base64,${toBase64("DejaVuSans-Bold.ttf")}); }
+    @font-face { font-family: "STPSans"; font-weight: 800; src: url(data:font/ttf;base64,${toBase64("DejaVuSans-Bold.ttf")}); }
+    @font-face { font-family: "STPSans"; font-weight: 900; src: url(data:font/ttf;base64,${toBase64("DejaVuSans-Bold.ttf")}); }
+    @font-face { font-family: "STPMono"; font-weight: 700; src: url(data:font/ttf;base64,${toBase64("DejaVuSansMono.ttf")}); }
+  </style></defs>`;
+  return fontDefsCache;
+}
 
 // Fills scripts/movers-short.template.html with a { winner, loser } pair (each needs
 // .symbol/.pctChange/.price/.intraday.{times,closes} -- exactly what findMover() returns) and
@@ -147,7 +172,9 @@ function escapeXml(s) {
 }
 
 // Same line + area-fill math as the browser's renderChart() in the HTML template, just
-// computed server-side instead of against a live SVG element.
+// computed server-side instead of against a live SVG element. Used for the fallback/live-mover
+// path, and as the honest 2-point entry->now line for /degen and /breakout picks (see
+// bestCall.js -- those have no real candle history to draw more than 2 points from).
 function chartPaths(closes, x, y, w, h) {
   const pad = 6;
   const min = Math.min(...closes), max = Math.max(...closes);
@@ -163,13 +190,83 @@ function chartPaths(closes, x, y, w, h) {
   const line = points.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
   const area = line + ` L${points[points.length - 1][0].toFixed(1)},${(y + h - pad).toFixed(1)} L${points[0][0].toFixed(1)},${(y + h - pad).toFixed(1)} Z`;
   const last = points[points.length - 1];
-  return { line, area, lastX: last[0], lastY: last[1] };
+  return { line, area, lastX: last[0], lastY: last[1], min, max };
 }
 
-function cardSvg({ x, y, w, h, accent, accentFill, tagLabel, ticker, pctChange, openPrice, nowPrice, closes, timeframe, volumeSurgeRatio, chartH = 170, entryLabel = "Open" }) {
+// Real candlesticks from real daily OHLC (see bestCall.js -- only /alerts and /discover picks
+// ever have this; DexScreener has no historical candles for /degen or /breakout at all, so those
+// never reach this function). Standard convention: wick = high/low, body = open/close, green
+// body when the day closed up, red when it closed down -- same color language as an actual
+// trading chart, not this bot's own winner/loser palette.
+function candlePaths(ohlc, x, y, w, h) {
+  const pad = 6;
+  const values = ohlc.flatMap(c => [c.high, c.low]);
+  const min = Math.min(...values), max = Math.max(...values);
+  const range = (max - min) || 1;
+  const n = ohlc.length;
+  const slotW = n > 0 ? (w - pad * 2) / n : 0;
+  const bodyW = Math.max(3, Math.min(28, slotW * 0.6));
+  const toY = v => y + pad + (h - pad * 2) * (1 - (v - min) / range);
+
+  const candles = ohlc.map((c, i) => {
+    const cx = x + pad + slotW * (i + 0.5);
+    const isUp = c.close >= c.open;
+    const color = isUp ? COLORS.winner : COLORS.loser;
+    const bodyTop = toY(Math.max(c.open, c.close));
+    const bodyBottom = toY(Math.min(c.open, c.close));
+    return (
+      `<line x1="${cx.toFixed(1)}" y1="${toY(c.high).toFixed(1)}" x2="${cx.toFixed(1)}" y2="${toY(c.low).toFixed(1)}" stroke="${color}" stroke-width="2.5"/>` +
+      `<rect x="${(cx - bodyW / 2).toFixed(1)}" y="${bodyTop.toFixed(1)}" width="${bodyW.toFixed(1)}" height="${Math.max(2.5, bodyBottom - bodyTop).toFixed(1)}" rx="1.5" fill="${color}"/>`
+    );
+  }).join("");
+
+  const lastX = x + pad + slotW * (n - 0.5);
+  const lastY = toY(ohlc[n - 1].close);
+  return { candles, lastX, lastY, min, max };
+}
+
+// Gridlines + a subtle frame behind the chart itself (candlestick or line) -- the piece that was
+// missing before: a bare line or candle set floating with no axis reference doesn't read as a
+// real chart. Same treatment for both chart types so /degen /breakout's honest 2-point line and
+// /alerts /discover's real candlesticks look like they belong to the same product.
+//
+// One combined "range" label above the frame, rather than separate high/low labels pinned to
+// corners -- corner placement only avoids the plotted line/candles for ONE trend direction;
+// the dual-card format's loser side is a downtrend (starts high, ends low), and separate
+// high-top/low-bottom labels collided with either the endpoint or neighboring text depending on
+// which corner and which card size, confirmed against real renders in both directions. A single
+// line in the gap above the frame is correct regardless of trend and regardless of card height.
+function chartFrame(x, y, w, h, min, max) {
+  const pad = 6;
+  const rows = 4;
+  const gridLines = Array.from({ length: rows + 1 }, (_, i) => {
+    const gy = y + pad + (h - pad * 2) * (i / rows);
+    return `<line x1="${x + pad}" y1="${gy.toFixed(1)}" x2="${x + w - pad}" y2="${gy.toFixed(1)}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>`;
+  }).join("");
+
+  return (
+    `<text x="${x}" y="${(y - 8).toFixed(1)}" font-family="STPSans" font-size="17" font-weight="700" fill="${COLORS.textMuted}">RANGE ${escapeXml(formatMoney(min))} - ${escapeXml(formatMoney(max))}</text>` +
+    `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.10)" stroke-width="1.5" rx="10"/>` +
+    gridLines
+  );
+}
+
+function cardSvg({ x, y, w, h, accent, accentFill, tagLabel, ticker, pctChange, openPrice, nowPrice, closes, ohlc, timeframe, volumeSurgeRatio, chartH = 170, entryLabel = "Open" }) {
   const pad = 40;
   const chartY = y + h - pad - chartH - 40;
-  const { line, area, lastX, lastY } = chartPaths(closes, x + pad, chartY, w - pad * 2, chartH);
+  const chartX = x + pad, chartW = w - pad * 2;
+
+  const useCandles = Array.isArray(ohlc) && ohlc.length >= 2;
+  const frame = useCandles
+    ? (() => { const c = candlePaths(ohlc, chartX, chartY, chartW, chartH); return { ...c, draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max) + c.candles }; })()
+    : (() => { const c = chartPaths(closes, chartX, chartY, chartW, chartH); return {
+        ...c,
+        draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max) +
+          `<path d="${c.area}" fill="${accentFill}"/>` +
+          `<path d="${c.line}" fill="none" stroke="${accent}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>` +
+          `<circle cx="${c.lastX.toFixed(1)}" cy="${c.lastY.toFixed(1)}" r="9" fill="${accent}"/>`
+      }; })();
+
   const pctText = `${pctChange >= 0 ? "+" : ""}${pctChange.toFixed(1)}%`;
   const surgeText = volumeSurgeRatio ? `${volumeSurgeRatio.toFixed(1)}× VOLUME` : null;
   const surgeWidth = surgeText ? 46 + surgeText.length * 15 : 0;
@@ -177,18 +274,16 @@ function cardSvg({ x, y, w, h, accent, accentFill, tagLabel, ticker, pctChange, 
   return `
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="26" fill="${COLORS.card}" stroke="${accent}" stroke-opacity="0.45" stroke-width="2.5"/>
     <rect x="${x + pad}" y="${y + 30}" width="150" height="44" rx="10" fill="${accentFill}"/>
-    <text x="${x + pad + 18}" y="${y + 60}" font-family="sans-serif" font-size="23" font-weight="800" letter-spacing="1.5" fill="${accent}">${escapeXml(tagLabel.toUpperCase())}</text>
+    <text x="${x + pad + 18}" y="${y + 60}" font-family="STPSans" font-size="23" font-weight="800" letter-spacing="1.5" fill="${accent}">${escapeXml(tagLabel.toUpperCase())}</text>
     ${surgeText ? `
     <rect x="${x + w - pad - surgeWidth}" y="${y + 30}" width="${surgeWidth}" height="44" rx="10" fill="rgba(88,101,242,0.18)"/>
-    <text x="${x + w - pad - surgeWidth / 2}" y="${y + 60}" font-family="sans-serif" font-size="21" font-weight="800" letter-spacing="0.5" fill="${COLORS.cta}" text-anchor="middle">${escapeXml(surgeText)}</text>
+    <text x="${x + w - pad - surgeWidth / 2}" y="${y + 60}" font-family="STPSans" font-size="21" font-weight="800" letter-spacing="0.5" fill="${COLORS.cta}" text-anchor="middle">${escapeXml(surgeText)}</text>
     ` : ""}
-    <text x="${x + pad}" y="${y + 140}" font-family="monospace" font-size="52" font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(ticker)}</text>
-    <text x="${x + pad}" y="${y + 235}" font-family="sans-serif" font-size="92" font-weight="900" fill="${accent}">${pctText}</text>
-    <text x="${x + pad}" y="${y + 278}" font-family="sans-serif" font-size="29" fill="${COLORS.textSecondary}">${escapeXml(entryLabel)} <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(openPrice)}</tspan> → Now <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(nowPrice)}</tspan></text>
-    <path d="${area}" fill="${accentFill}"/>
-    <path d="${line}" fill="none" stroke="${accent}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-    <circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="9" fill="${accent}"/>
-    <text x="${x + pad}" y="${y + h - 24}" font-family="sans-serif" font-size="23" font-weight="700" letter-spacing="1" fill="${COLORS.textMuted}">${escapeXml(timeframe.toUpperCase())}</text>
+    <text x="${x + pad}" y="${y + 140}" font-family="STPMono" font-size="52" font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(ticker)}</text>
+    <text x="${x + pad}" y="${y + 235}" font-family="STPSans" font-size="92" font-weight="900" fill="${accent}">${pctText}</text>
+    <text x="${x + pad}" y="${y + 278}" font-family="STPSans" font-size="29" fill="${COLORS.textSecondary}">${escapeXml(entryLabel)} <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(openPrice)}</tspan> → Now <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(nowPrice)}</tspan></text>
+    ${frame.draw}
+    <text x="${x + pad}" y="${y + h - 24}" font-family="STPSans" font-size="23" font-weight="700" letter-spacing="1" fill="${COLORS.textMuted}">${escapeXml(timeframe.toUpperCase())}</text>
   `;
 }
 
@@ -216,18 +311,19 @@ async function generateShortImage(winner, loser) {
   const loserY = winnerY + cardH + cardGap;
 
   const svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+  ${fontDefs()}
   <rect width="${W}" height="${H}" fill="${COLORS.surface}"/>
   <rect x="8" y="8" width="${W - 16}" height="${H - 16}" rx="36" fill="none" stroke="${COLORS.winner}" stroke-width="6" stroke-opacity="0.55"/>
 
   <clipPath id="logoClip"><rect x="70" y="80" width="64" height="64" rx="16"/></clipPath>
   <image href="${logoSrc}" x="70" y="80" width="64" height="64" clip-path="url(#logoClip)"/>
-  <text x="150" y="122" font-family="sans-serif" font-size="29" font-weight="700" letter-spacing="2" fill="${COLORS.textSecondary}">STP · TODAY'S MOVERS</text>
+  <text x="150" y="122" font-family="STPSans" font-size="29" font-weight="700" letter-spacing="2" fill="${COLORS.textSecondary}">STP · TODAY'S MOVERS</text>
 
-  <text x="70" y="212" font-family="sans-serif" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">Today's biggest</text>
-  <text x="70" y="280" font-family="sans-serif" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">winner &amp; loser.</text>
+  <text x="70" y="212" font-family="STPSans" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">Today's biggest</text>
+  <text x="70" y="280" font-family="STPSans" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">winner &amp; loser.</text>
 
   <circle cx="80" cy="325" r="9" fill="${COLORS.cta}"/>
-  <text x="100" y="334" font-family="sans-serif" font-size="29" font-weight="600" fill="${COLORS.textSecondary}">Live off today's session</text>
+  <text x="100" y="334" font-family="STPSans" font-size="29" font-weight="600" fill="${COLORS.textSecondary}">Live off today's session</text>
 
   ${cardSvg({
     x: cardX, y: winnerY, w: cardW, h: cardH, accent: COLORS.winner, accentFill: COLORS.winnerFill,
@@ -244,11 +340,11 @@ async function generateShortImage(winner, loser) {
   })}
 
   <rect x="${W / 2 - 230}" y="1610" width="460" height="90" rx="45" fill="${COLORS.cta}"/>
-  <text x="${W / 2}" y="1666" font-family="sans-serif" font-size="35" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
+  <text x="${W / 2}" y="1666" font-family="STPSans" font-size="35" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
 
-  <text x="${W / 2}" y="1760" font-family="sans-serif" font-size="25" font-weight="700" fill="${COLORS.textSecondary}" text-anchor="middle">${escapeXml(metaLine)}</text>
-  <text x="${W / 2}" y="1805" font-family="sans-serif" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Technical pattern data, not financial advice.</text>
-  <text x="${W / 2}" y="1835" font-family="sans-serif" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
+  <text x="${W / 2}" y="1760" font-family="STPSans" font-size="25" font-weight="700" fill="${COLORS.textSecondary}" text-anchor="middle">${escapeXml(metaLine)}</text>
+  <text x="${W / 2}" y="1805" font-family="STPSans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Technical pattern data, not financial advice.</text>
+  <text x="${W / 2}" y="1835" font-family="STPSans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
 </svg>`;
 
   return sharp(Buffer.from(svg)).png().toBuffer();
@@ -261,7 +357,10 @@ async function generateShortImage(winner, loser) {
 // `.ticker/.pctChange/.openPrice/.nowPrice/.closes` (a real trajectory if one exists, or an
 // honest 2-point entry->now line if it doesn't -- see bestCall.js), plus `.badgeText`,
 // `.entryLabel`, `.timeframeLabel`, `.headlineLines` (exactly 2 strings), `.captionText`, and
-// `.metaLine`. `.volumeSurgeRatio` is optional.
+// `.metaLine`. `.volumeSurgeRatio` is optional. `.ohlc` (real daily open/high/low/close, only
+// ever populated for /alerts and /discover picks) renders as actual candlesticks when present;
+// null/absent falls back to the `.closes` line chart -- /degen and /breakout never have real
+// candle history to draw more than a 2-point line from, and this never fabricates one.
 async function generateHighlightImage(highlight) {
   if (!highlight?.closes?.length) {
     throw new Error("highlight is missing closes -- needs at least a 2-point [entry, now] line");
@@ -276,33 +375,34 @@ async function generateHighlightImage(highlight) {
   const cardY = 440;
 
   const svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+  ${fontDefs()}
   <rect width="${W}" height="${H}" fill="${COLORS.surface}"/>
   <rect x="8" y="8" width="${W - 16}" height="${H - 16}" rx="36" fill="none" stroke="${COLORS.winner}" stroke-width="6" stroke-opacity="0.55"/>
 
   <clipPath id="logoClip"><rect x="70" y="80" width="64" height="64" rx="16"/></clipPath>
   <image href="${logoSrc}" x="70" y="80" width="64" height="64" clip-path="url(#logoClip)"/>
-  <text x="150" y="122" font-family="sans-serif" font-size="29" font-weight="700" letter-spacing="2" fill="${COLORS.textSecondary}">STP · ${escapeXml(highlight.badgeText.toUpperCase())}</text>
+  <text x="150" y="122" font-family="STPSans" font-size="29" font-weight="700" letter-spacing="2" fill="${COLORS.textSecondary}">STP · ${escapeXml(highlight.badgeText.toUpperCase())}</text>
 
-  <text x="70" y="212" font-family="sans-serif" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">${escapeXml(highlight.headlineLines[0])}</text>
-  <text x="70" y="280" font-family="sans-serif" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">${escapeXml(highlight.headlineLines[1])}</text>
+  <text x="70" y="212" font-family="STPSans" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">${escapeXml(highlight.headlineLines[0])}</text>
+  <text x="70" y="280" font-family="STPSans" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">${escapeXml(highlight.headlineLines[1])}</text>
 
   <circle cx="80" cy="325" r="9" fill="${COLORS.cta}"/>
-  <text x="100" y="334" font-family="sans-serif" font-size="29" font-weight="600" fill="${COLORS.textSecondary}">${escapeXml(highlight.captionText)}</text>
+  <text x="100" y="334" font-family="STPSans" font-size="29" font-weight="600" fill="${COLORS.textSecondary}">${escapeXml(highlight.captionText)}</text>
 
   ${cardSvg({
     x: cardX, y: cardY, w: cardW, h: cardH, accent: COLORS.winner, accentFill: COLORS.winnerFill,
     tagLabel: highlight.badgeText, ticker: highlight.ticker, pctChange: highlight.pctChange,
     openPrice: formatMoney(highlight.openPrice), nowPrice: formatMoney(highlight.nowPrice),
-    closes: highlight.closes, timeframe: highlight.timeframeLabel, volumeSurgeRatio: highlight.volumeSurgeRatio,
+    closes: highlight.closes, ohlc: highlight.ohlc, timeframe: highlight.timeframeLabel, volumeSurgeRatio: highlight.volumeSurgeRatio,
     chartH: 480, entryLabel: highlight.entryLabel
   })}
 
   <rect x="${W / 2 - 230}" y="1610" width="460" height="90" rx="45" fill="${COLORS.cta}"/>
-  <text x="${W / 2}" y="1666" font-family="sans-serif" font-size="35" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
+  <text x="${W / 2}" y="1666" font-family="STPSans" font-size="35" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
 
-  <text x="${W / 2}" y="1760" font-family="sans-serif" font-size="25" font-weight="700" fill="${COLORS.textSecondary}" text-anchor="middle">${escapeXml(highlight.metaLine)}</text>
-  <text x="${W / 2}" y="1805" font-family="sans-serif" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Technical pattern data, not financial advice.</text>
-  <text x="${W / 2}" y="1835" font-family="sans-serif" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
+  <text x="${W / 2}" y="1760" font-family="STPSans" font-size="25" font-weight="700" fill="${COLORS.textSecondary}" text-anchor="middle">${escapeXml(highlight.metaLine)}</text>
+  <text x="${W / 2}" y="1805" font-family="STPSans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Technical pattern data, not financial advice.</text>
+  <text x="${W / 2}" y="1835" font-family="STPSans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
 </svg>`;
 
   return sharp(Buffer.from(svg)).png().toBuffer();
@@ -325,6 +425,7 @@ function buildCallHighlight(call) {
     openPrice: call.entryPrice,
     nowPrice: call.currentPrice,
     closes: call.closes,
+    ohlc: call.ohlc || null,
     entryLabel: "Called at",
     timeframeLabel: `Called via /${call.source.toLowerCase()} · ${ageLabel}`,
     volumeSurgeRatio: null,
@@ -344,6 +445,7 @@ function buildFallbackHighlight(winner) {
     openPrice: winner.intraday.closes[0],
     nowPrice: winner.price,
     closes: winner.intraday.closes,
+    ohlc: null, // findMover only fetches close-only intraday bars, never full OHLC
     entryLabel: "Open",
     timeframeLabel: formatSessionLabel(winner.intraday.times),
     volumeSurgeRatio: winner.volumeSurgeRatio,

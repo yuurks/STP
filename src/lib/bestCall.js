@@ -42,12 +42,15 @@ function evaluateStopAware(entry, rows) {
 
   const pctChange = ((exitPrice - entry.price) / entry.price) * 100;
   // Trajectory since firing, for the chart -- the fired-on candle through today, real daily
-  // closes, not synthetic.
+  // OHLC, not synthetic. /alerts and /discover are the only sources with real candle history
+  // (Twelve Data), so this is the only path that can ever produce actual candlesticks -- /degen
+  // and /breakout never have this, DexScreener has no historical candles at all for either.
   const sinceFired = rows.filter(r => r.date >= firedDate);
   return {
     pctChange,
     currentPrice: exitPrice,
-    closes: sinceFired.map(r => r.close)
+    closes: sinceFired.map(r => r.close),
+    ohlc: sinceFired.map(r => ({ open: r.open, high: r.high, low: r.low, close: r.close }))
   };
 }
 
@@ -79,7 +82,8 @@ async function bestFromCandleSource(guildId, source, getHistory) {
       best = {
         source, symbol: entry.symbol, verdict: entry.verdict,
         entryPrice: entry.price, currentPrice: result.currentPrice,
-        pctChange: result.pctChange, firedAt: entry.timestamp, closes: result.closes
+        pctChange: result.pctChange, firedAt: entry.timestamp,
+        closes: result.closes, ohlc: result.ohlc
       };
     }
   }
@@ -121,8 +125,9 @@ async function bestFromDexScreenerSource(guildId, source, getHistory) {
         entryPrice: entry.price, currentPrice,
         pctChange, firedAt: entry.timestamp,
         // No candle history exists for these -- an honest 2-point line (entry -> now), not a
-        // fabricated trajectory in between.
-        closes: [entry.price, currentPrice]
+        // fabricated trajectory in between. ohlc stays null so the renderer knows not to attempt
+        // candlesticks here.
+        closes: [entry.price, currentPrice], ohlc: null
       };
     }
   }
