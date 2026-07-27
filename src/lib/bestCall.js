@@ -114,7 +114,20 @@ function resampleOhlc(candles, entryIndex) {
 // the alert was logged with a pairAddress (added alongside this feature -- older log entries
 // won't have one and gracefully keep the 2-point line instead). Never thrown on failure -- a
 // missing/delisted/too-new pool just means no enrichment, not a broken /shorts run.
-async function tryFetchRealOhlc(entry) {
+//
+// currentPrice is the price bestFromDexScreenerSource already confirmed via a fresh DexScreener
+// lookup, keyed by the token's mint address -- which finds whatever pool DexScreener currently
+// considers canonical for that token (highest liquidity), not necessarily the same pool
+// pairAddress points at. A pump.fun token migrating from its bonding curve to a real AMM pool
+// between when the alert fired and when this runs is exactly the case where those two addresses
+// diverge: pairAddress is frozen at whatever it was at log time, DexScreener's current lookup
+// naturally follows the token to its new pool. Fetching OHLC from the stale pool and showing it
+// next to a "Now $X" price that pool never actually reached would be a real, visible
+// inconsistency -- if the fetched pool's own latest close doesn't roughly agree with the
+// independently-confirmed current price, treat it as the wrong pool and skip enrichment rather
+// than show a chart that silently disagrees with the text above it.
+const MAX_PRICE_DIVERGENCE_RATIO = 0.5;
+async function tryFetchRealOhlc(entry, currentPrice) {
   if (!entry.pairAddress) return null;
   try {
     const candles = await fetchOhlcv(entry.pairAddress, pickGranularity(Date.now() - entry.timestamp));
@@ -123,6 +136,13 @@ async function tryFetchRealOhlc(entry) {
     // isn't visible in this window -- that's a real "not enough history" case, not "it's at the
     // start," and showing a marker on the wrong candle would be worse than showing none.
     if (candles[0].time > entry.timestamp) return null;
+
+    const lastClose = candles[candles.length - 1].close;
+    if (currentPrice > 0 && Math.abs(lastClose - currentPrice) / currentPrice > MAX_PRICE_DIVERGENCE_RATIO) {
+      console.error(`Best-call GeckoTerminal data for ${entry.symbol} disagrees with confirmed current price (pool close ${lastClose} vs ${currentPrice}) -- likely a stale pairAddress from before a migration, skipping enrichment`);
+      return null;
+    }
+
     const rawEntryIndex = candles.findIndex(c => c.time >= entry.timestamp);
     const { candles: resampled, entryIndex } = resampleOhlc(
       candles, rawEntryIndex === -1 ? candles.length - 1 : rawEntryIndex
@@ -218,7 +238,7 @@ async function bestFromDexScreenerSource(guildId, source, getHistory) {
   // Only the single winning pick ever gets a real-candle lookup -- never spent on every
   // eligible candidate, so this stays cheap regardless of how much history exists.
   if (best && winningEntry) {
-    const enriched = await tryFetchRealOhlc(winningEntry);
+    const enriched = await tryFetchRealOhlc(winningEntry, best.currentPrice);
     if (enriched) {
       best.ohlc = enriched.ohlc;
       best.entryIndex = enriched.entryIndex;
