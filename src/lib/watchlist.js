@@ -439,6 +439,33 @@ function markShortRun(guildId, slot, dateStr) {
   saveAll(all);
 }
 
+// /ytwatch config: channelId (the resolved YouTube channel), discordChannelId (where to post),
+// intervalMinutes, lastRun, and lastVideoId (the most recent video ID already seen/announced --
+// seeded at setup time so turning this on never retroactively announces a channel's existing
+// back catalog, only uploads from that point forward).
+function setYoutubeWatch(guildId, config) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.youtubeWatch = config;
+  saveAll(all);
+  return guild.youtubeWatch;
+}
+
+function markYoutubeWatchRun(guildId, timestamp, lastVideoId) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  if (guild.youtubeWatch) {
+    guild.youtubeWatch.lastRun = timestamp;
+    if (lastVideoId !== undefined) guild.youtubeWatch.lastVideoId = lastVideoId;
+  }
+  saveAll(all);
+}
+
+function allGuildsWithYoutubeWatch() {
+  const all = loadAll();
+  return Object.entries(all).filter(([, g]) => g.youtubeWatch);
+}
+
 function getPortfolio(guildId) {
   const all = loadAll();
   const guild = ensureGuild(all, guildId);
@@ -475,6 +502,7 @@ module.exports = {
   logAlert, getAlertHistory,
   setAlertDigestSchedule, markAlertDigestRun, allGuildsWithAlertDigestSchedule,
   setShortsSchedule, allGuildsWithShortsSchedule, markShortRun,
+  setYoutubeWatch, markYoutubeWatchRun, allGuildsWithYoutubeWatch,
   getDiscoverVerdicts, saveDiscoverVerdicts, logDiscoverAlert, getDiscoverAlertHistory,
   setDiscoverSchedule, markDiscoverRun, allGuildsWithDiscoverSchedule,
   getDegenAlerted, addDegenAlerted, setDegenSchedule, markDegenRun, allGuildsWithDegenSchedule,

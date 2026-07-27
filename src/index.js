@@ -14,6 +14,7 @@ const { findDegenCandidates } = degen;
 const { findBreakoutCandidates } = require("./lib/breakout");
 const { fetchTokenTradingData } = require("./lib/dexscreener");
 const { findBestCall } = require("./lib/bestCall");
+const { resolveChannelId, fetchLatestVideo } = require("./lib/youtubeWatch");
 const {
   scanEmbed, alertEmbed, discoverEmbed, degenEmbed, degenClosestEmbed, volatilityEmbed, backtestEmbed,
   alertHistoryEmbed, discoverHistoryEmbed, degenHistoryEmbed, portfolioEmbed, highlightEmbed, logoAttachment,
@@ -290,6 +291,23 @@ async function runShortsDrop(guildId, channel) {
   const filename = "stp-short.png";
   const file = new AttachmentBuilder(png, { name: filename });
   await channel.send({ embeds: [highlightEmbed(highlight, filename)], files: [file] });
+}
+
+// Checks a watched YouTube channel's public feed for something newer than the last video seen,
+// and posts the bare URL if so -- deliberately NOT wrapped in a Discord embed, since Discord only
+// auto-builds the rich thumbnail/title/channel preview for a bare URL in message content, not one
+// referenced from inside a custom embed. This only detects and announces; it never uploads
+// anything itself (see youtubeWatch.js).
+async function runYoutubeWatchCheck(guildId, channel, watchConfig) {
+  const latest = await fetchLatestVideo(watchConfig.channelId);
+  const now = Date.now();
+  if (!latest || latest.videoId === watchConfig.lastVideoId) {
+    watchlist.markYoutubeWatchRun(guildId, now);
+    return;
+  }
+  watchlist.markYoutubeWatchRun(guildId, now, latest.videoId);
+  const label = latest.isShort ? "Short" : "video";
+  await channel.send(`**🎬 New ${label} is live!**\n${latest.url}`);
 }
 
 // /discover scans the crypto candidate pool (not the watchlist) for coins whose RSI/MACD/EMA
@@ -601,6 +619,19 @@ client.once(Events.ClientReady, c => {
         console.error(`Breakout scan failed for guild ${guildId}: ${err.message}`);
       }
     }
+
+    for (const [guildId, guildData] of watchlist.allGuildsWithYoutubeWatch()) {
+      const { discordChannelId, intervalMinutes, lastRun } = guildData.youtubeWatch;
+      const due = !lastRun || now - lastRun >= intervalMinutes * 60 * 1000;
+      if (!due) continue;
+
+      try {
+        const channel = await client.channels.fetch(discordChannelId);
+        await runYoutubeWatchCheck(guildId, channel, guildData.youtubeWatch);
+      } catch (err) {
+        console.error(`YouTube watch check failed for guild ${guildId}: ${err.message}`);
+      }
+    }
   }, 60 * 1000);
 });
 
@@ -867,6 +898,49 @@ client.on(Events.InteractionCreate, async interaction => {
           runShortsDrop(interaction.guildId, interaction.channel).catch(err => {
             console.error(`Manual shorts run failed for guild ${interaction.guildId}: ${err.message}`);
             interaction.channel.send("Shorts scan failed partway through — check the bot logs.").catch(() => {});
+          });
+        }
+        break;
+      }
+
+      case "ytwatch": {
+        const sub = interaction.options.getSubcommand();
+        if (sub === "on") {
+          await interaction.deferReply();
+          const input = interaction.options.getString("youtube_channel");
+          const discordChannel = interaction.options.getChannel("channel");
+          const intervalMinutes = Math.max(5, interaction.options.getInteger("interval_minutes") || 10);
+          try {
+            const channelId = await resolveChannelId(input);
+            // Seed the baseline silently -- whatever's already on the channel right now should
+            // never get announced retroactively, only uploads from this point forward.
+            const latest = await fetchLatestVideo(channelId);
+            watchlist.setYoutubeWatch(interaction.guildId, {
+              channelId, discordChannelId: discordChannel.id, intervalMinutes,
+              lastRun: null, lastVideoId: latest ? latest.videoId : null
+            });
+            await interaction.editReply(
+              `Watching that channel now -- I'll post in ${discordChannel} the moment a new video goes up ` +
+              `(checking every ${intervalMinutes} min). This only detects and announces a bare link -- Discord ` +
+              "builds the thumbnail/title preview itself, I never upload or touch YouTube's API. Whatever's " +
+              "already on the channel right now won't be announced, only new uploads from here on."
+            );
+          } catch (err) {
+            await interaction.editReply(`Couldn't set that up: ${err.message}`);
+          }
+        } else if (sub === "off") {
+          watchlist.setYoutubeWatch(interaction.guildId, null);
+          await interaction.reply("Stopped watching for new uploads.");
+        } else if (sub === "now") {
+          const watchConfig = watchlist.getGuild(interaction.guildId).youtubeWatch;
+          if (!watchConfig) {
+            await interaction.reply({ content: "Not watching any channel yet -- run `/ytwatch on` first.", ephemeral: true });
+            break;
+          }
+          await interaction.reply("Checking that channel now...");
+          runYoutubeWatchCheck(interaction.guildId, interaction.channel, watchConfig).catch(err => {
+            console.error(`Manual ytwatch check failed for guild ${interaction.guildId}: ${err.message}`);
+            interaction.channel.send("Check failed partway through — check the bot logs.").catch(() => {});
           });
         }
         break;

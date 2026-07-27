@@ -137,6 +137,9 @@ if you want a different role than whoever already has Manage Server.
 | `/shorts on channel:#...` | Turn on the daily YouTube Shorts content drop, twice a day (4:00pm and 8:00pm ET) — features this server's best-performing real past call (from `/alerts`, `/discover`, `/degen`, or `/breakout` history) if one's old enough to have a verified result, otherwise falls back to today's single biggest live crypto mover. Only ever a winner either way — no loser side in this format |
 | `/shorts off` | Turn off the daily Shorts drop |
 | `/shorts now` | Run a Shorts scan immediately instead of waiting for the schedule |
+| `/ytwatch on youtube_channel:@handle channel:#...` | Watch a YouTube channel's public feed and post the bare link here the moment a new video goes up (checked every 10 min by default) — Discord builds the thumbnail/title preview itself. Doesn't upload anything, only detects and announces; whatever's already on the channel at setup time is never announced retroactively |
+| `/ytwatch off` | Stop watching for new uploads |
+| `/ytwatch now` | Check for a new upload immediately instead of waiting for the schedule |
 | `/discover on channel:#...` | Turn on recurring scans of the crypto pool for a fresh Buy/Strong Buy (RSI/MACD/EMA scoring + confirmed ADX trend) — posts an alert only when one qualifies, so you can look and decide, default every 4h |
 | `/discover off` | Turn off recurring Discover scans |
 | `/discover now` | Run a Discover scan immediately instead of waiting for the schedule |
@@ -280,6 +283,22 @@ if you want a different role than whoever already has Manage Server.
   interactive HTML winner/loser visual (count-up numbers, self-drawing chart) for when you want
   something to screen-record instead of a static image -- unrelated to the bot's own `/shorts`
   command, not updated to match this change.
+- **`/ytwatch` announces a real upload, it doesn't create one**: this bot only ever generates a
+  still image for `/shorts` (never a video), and actually uploading to YouTube needs the Data API
+  with OAuth (you'd authorize the bot through Google's consent screen once, and it'd need securely
+  stored credentials) -- a meaningfully bigger project than anything else here, not something this
+  adds. `/ytwatch` instead polls a channel's public Atom feed
+  (`youtube.com/feeds/videos.xml?channel_id=...`, confirmed live, no key or OAuth needed) for
+  something newer than the last video it saw, and posts the bare URL when it finds one -- Discord
+  builds the thumbnail/title/channel preview itself from that URL, the bot never constructs an
+  embed for it (an embedded link inside a custom Discord embed does NOT get that same
+  auto-preview treatment, confirmed against real Discord behavior). Resolving a channel handle
+  (`@name`) to the real channel ID it needs requires a real browser User-Agent header -- confirmed
+  live that YouTube serves a stripped page with no channel data at all to Node's default fetch UA,
+  and a full page with a spoofed one. `lastVideoId` is seeded at setup time specifically so
+  turning this on never retroactively announces whatever's already on the channel, only uploads
+  from that point forward -- verified end-to-end (seed → no false announce → simulated new
+  upload → announces once → checked again → no duplicate).
 - **`/shorts` is crypto-only, skewed toward small/mid-cap**: `crypto.txt` is compiled roughly
   biggest-to-smallest by market cap, so the scan pool skips the top ~50 entries (the majors) and
   samples from the rest -- an approximation, not real live market-cap data (Twelve Data's free

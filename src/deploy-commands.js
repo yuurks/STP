@@ -94,6 +94,19 @@ const commands = [
     .addSubcommand(sc => sc.setName("now").setDescription("Run a Shorts scan right now instead of waiting for the schedule")),
 
   new SlashCommandBuilder()
+    .setName("ytwatch")
+    .setDescription("Announce it in Discord the moment a new video goes up on a YouTube channel")
+    .setDefaultMemberPermissions(MANAGE_GUILD_ONLY)
+    .addSubcommand(sc =>
+      sc.setName("on").setDescription("Start watching a YouTube channel for new uploads")
+        .addStringOption(o => o.setName("youtube_channel").setDescription("Channel URL, @handle, or channel ID").setRequired(true))
+        .addChannelOption(o => o.setName("channel").setDescription("Discord channel to post the announcement in").setRequired(true))
+        .addIntegerOption(o => o.setName("interval_minutes").setDescription("How often to check, in minutes, min 5 (default 10)").setRequired(false))
+    )
+    .addSubcommand(sc => sc.setName("off").setDescription("Stop watching for new uploads"))
+    .addSubcommand(sc => sc.setName("now").setDescription("Check for a new upload right now instead of waiting for the schedule")),
+
+  new SlashCommandBuilder()
     .setName("discover")
     .setDescription("Scans the crypto pool and alerts when RSI/MACD/EMA scoring and ADX trend line up into a fresh Buy")
     .setDefaultMemberPermissions(MANAGE_GUILD_ONLY)
