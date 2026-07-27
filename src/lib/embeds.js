@@ -443,28 +443,25 @@ function formatSurge(ratio) {
   return ratio ? `${ratio.toFixed(1)}× its normal volume` : null;
 }
 
-function shortsEmbed(winner, loser, label, imageFilename) {
+// Single-card /shorts content -- either a real past call (see bestCall.js, shorts.js's
+// buildCallHighlight) or, when nothing eligible has won yet, today's live biggest mover
+// (buildFallbackHighlight). No loser side exists in this format at all: a losing call is never
+// featured, and the live fallback only ever shows the day's winner.
+function highlightEmbed(highlight, imageFilename) {
   const embed = new EmbedBuilder()
-    .setTitle(`🎬 Today's Biggest Movers — ${label}`)
+    .setTitle(highlight.badgeText === "Real Call" ? "🎬 Real Call — Verified Result" : "🎬 Today's Biggest Mover")
     .setColor(0x0ca34a)
     .setImage(`attachment://${imageFilename}`)
     .setFooter({ text: "Technical pattern data, not financial advice. Save the image above for your Short." })
     .setTimestamp();
 
-  embed.addFields(
-    {
-      name: `🟢 Winner: ${winner.symbol} · ${winner.pctChange >= 0 ? "+" : ""}${winner.pctChange.toFixed(1)}%`,
-      value: `Open ${formatMoney(winner.intraday.closes[0])} → Now ${formatMoney(winner.price)}` +
-        (formatSurge(winner.volumeSurgeRatio) ? ` · Trading at ${formatSurge(winner.volumeSurgeRatio)}` : ""),
-      inline: false
-    },
-    {
-      name: `🔴 Loser: ${loser.symbol} · ${loser.pctChange >= 0 ? "+" : ""}${loser.pctChange.toFixed(1)}%`,
-      value: `Open ${formatMoney(loser.intraday.closes[0])} → Now ${formatMoney(loser.price)}` +
-        (formatSurge(loser.volumeSurgeRatio) ? ` · Trading at ${formatSurge(loser.volumeSurgeRatio)}` : ""),
-      inline: false
-    }
-  );
+  embed.addFields({
+    name: `${highlight.ticker} · ${highlight.pctChange >= 0 ? "+" : ""}${highlight.pctChange.toFixed(1)}%`,
+    value: `${highlight.entryLabel} ${formatMoney(highlight.openPrice)} → Now ${formatMoney(highlight.nowPrice)}` +
+      (formatSurge(highlight.volumeSurgeRatio) ? ` · Trading at ${formatSurge(highlight.volumeSurgeRatio)}` : "") +
+      `\n${highlight.timeframeLabel}`,
+    inline: false
+  });
 
   return embed;
 }
@@ -473,5 +470,5 @@ module.exports = {
   scanEmbed, alertEmbed, discoverEmbed, degenEmbed, degenClosestEmbed, volatilityEmbed, backtestEmbed,
   alertHistoryEmbed, discoverHistoryEmbed, degenHistoryEmbed, portfolioEmbed,
   breakoutEmbed, breakoutClosestEmbed, breakoutHistoryEmbed,
-  shortsEmbed, logoAttachment, VERDICT_COLOR
+  highlightEmbed, logoAttachment, VERDICT_COLOR
 };

@@ -134,7 +134,7 @@ if you want a different role than whoever already has Manage Server.
 | `/portfolio start starting_cash:10000` | Start a simulated paper-trading portfolio (no real money) that follows this bot's own Buy/Sell signals |
 | `/portfolio status` | Show current cash, open positions with live unrealized P&L, total return, and recent closed trades |
 | `/portfolio reset` | Wipe the paper portfolio and start over |
-| `/shorts on channel:#...` | Turn on the daily YouTube Shorts content drop — scans small/mid-cap crypto for today's single biggest winner/loser by % change, posts a ready-to-use image, twice a day (4:00pm and 8:00pm ET) |
+| `/shorts on channel:#...` | Turn on the daily YouTube Shorts content drop, twice a day (4:00pm and 8:00pm ET) — features this server's best-performing real past call (from `/alerts`, `/discover`, `/degen`, or `/breakout` history) if one's old enough to have a verified result, otherwise falls back to today's single biggest live crypto mover. Only ever a winner either way — no loser side in this format |
 | `/shorts off` | Turn off the daily Shorts drop |
 | `/shorts now` | Run a Shorts scan immediately instead of waiting for the schedule |
 | `/discover on channel:#...` | Turn on recurring scans of the crypto pool for a fresh Buy/Strong Buy (RSI/MACD/EMA scoring + confirmed ADX trend) — posts an alert only when one qualifies, so you can look and decide, default every 4h |
@@ -261,18 +261,25 @@ if you want a different role than whoever already has Manage Server.
   DexScreener no longer returns that token at all (almost always because it died or got rugged) —
   excluding those from the average makes the win rate look better than reality, not worse, so that
   count is shown, not hidden.
-- **`/shorts` can't fully automate posting to YouTube**: at the scheduled time (4pm and 8pm ET,
-  both) the bot scans a sample of small/mid-cap crypto for the day's single biggest gainer/loser,
-  renders the result as a 1080x1920 PNG (built as SVG server-side and rasterized with `sharp`, not
-  a headless browser -- puppeteer was ruled out early on as too heavy, ~300MB, for what this
-  needs), and posts it directly as a Discord image. Turning that into an actual uploaded YouTube
-  Short and posting it still needs a human -- the bot won't ever render/mux video or touch
-  YouTube's API on its own. Each scheduled run samples 100 candidates (not the full 300 `/watch
-  autobuild` uses) specifically to keep two automatic runs a day from eating too much of the
-  shared 800/day request quota. A separate manual pipeline (`scripts/find-movers.js` +
-  `scripts/generate-short.js`) still produces an animated, interactive HTML version of the same
-  visual (count-up numbers, self-drawing chart) for when you want something to screen-record
-  instead of a static image.
+- **`/shorts` features a real past call over a live scan, but only when one's actually earned it**:
+  at the scheduled time (4pm and 8pm ET, both) `findBestCall` (`src/lib/bestCall.js`) checks every
+  logged `/alerts`, `/discover`, `/degen`, and `/breakout` alert old enough to have a real result
+  (same eligibility windows their own `history` subcommands use -- ~5 days for the daily-candle
+  sources, ~1 hour for the DexScreener-only ones) and picks the single best-performing one, if any
+  is a genuine winner. If nothing eligible has won yet (a real state for a fresh install, or a
+  server with no scans running at all), it falls back to a live scan of small/mid-cap crypto for
+  today's single biggest gainer -- winner-only either way, since a losing call or a live loser is
+  never featured in this format. Renders as a 1080x1920 PNG (built as SVG server-side and
+  rasterized with `sharp`, not a headless browser -- puppeteer was ruled out early on as too
+  heavy, ~300MB, for what this needs) and posts directly as a Discord image. Turning that into an
+  actual uploaded YouTube Short and posting it still needs a human -- the bot won't ever
+  render/mux video or touch YouTube's API on its own. The live-scan fallback samples 100
+  candidates (not the full 300 `/watch autobuild` uses) specifically to keep two automatic runs a
+  day from eating too much of the shared 800/day request quota. A separate manual pipeline
+  (`scripts/find-movers.js` + `scripts/generate-short.js`) still produces the older animated,
+  interactive HTML winner/loser visual (count-up numbers, self-drawing chart) for when you want
+  something to screen-record instead of a static image -- unrelated to the bot's own `/shorts`
+  command, not updated to match this change.
 - **`/shorts` is crypto-only, skewed toward small/mid-cap**: `crypto.txt` is compiled roughly
   biggest-to-smallest by market cap, so the scan pool skips the top ~50 entries (the majors) and
   samples from the rest -- an approximation, not real live market-cap data (Twelve Data's free

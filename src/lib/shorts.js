@@ -166,9 +166,8 @@ function chartPaths(closes, x, y, w, h) {
   return { line, area, lastX: last[0], lastY: last[1] };
 }
 
-function cardSvg({ x, y, w, h, accent, accentFill, tagLabel, ticker, pctChange, openPrice, nowPrice, closes, timeframe, volumeSurgeRatio }) {
+function cardSvg({ x, y, w, h, accent, accentFill, tagLabel, ticker, pctChange, openPrice, nowPrice, closes, timeframe, volumeSurgeRatio, chartH = 170, entryLabel = "Open" }) {
   const pad = 40;
-  const chartH = 170;
   const chartY = y + h - pad - chartH - 40;
   const { line, area, lastX, lastY } = chartPaths(closes, x + pad, chartY, w - pad * 2, chartH);
   const pctText = `${pctChange >= 0 ? "+" : ""}${pctChange.toFixed(1)}%`;
@@ -185,7 +184,7 @@ function cardSvg({ x, y, w, h, accent, accentFill, tagLabel, ticker, pctChange, 
     ` : ""}
     <text x="${x + pad}" y="${y + 140}" font-family="monospace" font-size="52" font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(ticker)}</text>
     <text x="${x + pad}" y="${y + 235}" font-family="sans-serif" font-size="92" font-weight="900" fill="${accent}">${pctText}</text>
-    <text x="${x + pad}" y="${y + 278}" font-family="sans-serif" font-size="29" fill="${COLORS.textSecondary}">Open <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(openPrice)}</tspan> → Now <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(nowPrice)}</tspan></text>
+    <text x="${x + pad}" y="${y + 278}" font-family="sans-serif" font-size="29" fill="${COLORS.textSecondary}">${escapeXml(entryLabel)} <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(openPrice)}</tspan> → Now <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(nowPrice)}</tspan></text>
     <path d="${area}" fill="${accentFill}"/>
     <path d="${line}" fill="none" stroke="${accent}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
     <circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="9" fill="${accent}"/>
@@ -255,4 +254,104 @@ async function generateShortImage(winner, loser) {
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
-module.exports = { findMover, generateShortHtml, generateShortImage };
+// Single-card version of the same 1080x1920 layout, used for the "best real call" content (see
+// src/lib/bestCall.js) and its live-market fallback -- one bigger card instead of a winner/loser
+// pair, since there's no loser side in this format at all: a losing call is never featured, and
+// a live-market fallback only ever shows the day's winner, never its loser. `highlight` needs
+// `.ticker/.pctChange/.openPrice/.nowPrice/.closes` (a real trajectory if one exists, or an
+// honest 2-point entry->now line if it doesn't -- see bestCall.js), plus `.badgeText`,
+// `.entryLabel`, `.timeframeLabel`, `.headlineLines` (exactly 2 strings), `.captionText`, and
+// `.metaLine`. `.volumeSurgeRatio` is optional.
+async function generateHighlightImage(highlight) {
+  if (!highlight?.closes?.length) {
+    throw new Error("highlight is missing closes -- needs at least a 2-point [entry, now] line");
+  }
+
+  const W = 1080, H = 1920;
+  const logoSrc = `data:image/png;base64,${fs.readFileSync(LOGO_PATH).toString("base64")}`;
+  // Bigger than the dual-card layout's 820/170 -- there's no second card competing for space, so
+  // the single card (and its chart) should actually use the extra room instead of leaving a dead
+  // gap before the CTA button.
+  const cardX = 70, cardW = W - 140, cardH = 1000;
+  const cardY = 440;
+
+  const svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${W}" height="${H}" fill="${COLORS.surface}"/>
+  <rect x="8" y="8" width="${W - 16}" height="${H - 16}" rx="36" fill="none" stroke="${COLORS.winner}" stroke-width="6" stroke-opacity="0.55"/>
+
+  <clipPath id="logoClip"><rect x="70" y="80" width="64" height="64" rx="16"/></clipPath>
+  <image href="${logoSrc}" x="70" y="80" width="64" height="64" clip-path="url(#logoClip)"/>
+  <text x="150" y="122" font-family="sans-serif" font-size="29" font-weight="700" letter-spacing="2" fill="${COLORS.textSecondary}">STP · ${escapeXml(highlight.badgeText.toUpperCase())}</text>
+
+  <text x="70" y="212" font-family="sans-serif" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">${escapeXml(highlight.headlineLines[0])}</text>
+  <text x="70" y="280" font-family="sans-serif" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">${escapeXml(highlight.headlineLines[1])}</text>
+
+  <circle cx="80" cy="325" r="9" fill="${COLORS.cta}"/>
+  <text x="100" y="334" font-family="sans-serif" font-size="29" font-weight="600" fill="${COLORS.textSecondary}">${escapeXml(highlight.captionText)}</text>
+
+  ${cardSvg({
+    x: cardX, y: cardY, w: cardW, h: cardH, accent: COLORS.winner, accentFill: COLORS.winnerFill,
+    tagLabel: highlight.badgeText, ticker: highlight.ticker, pctChange: highlight.pctChange,
+    openPrice: formatMoney(highlight.openPrice), nowPrice: formatMoney(highlight.nowPrice),
+    closes: highlight.closes, timeframe: highlight.timeframeLabel, volumeSurgeRatio: highlight.volumeSurgeRatio,
+    chartH: 480, entryLabel: highlight.entryLabel
+  })}
+
+  <rect x="${W / 2 - 230}" y="1610" width="460" height="90" rx="45" fill="${COLORS.cta}"/>
+  <text x="${W / 2}" y="1666" font-family="sans-serif" font-size="35" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
+
+  <text x="${W / 2}" y="1760" font-family="sans-serif" font-size="25" font-weight="700" fill="${COLORS.textSecondary}" text-anchor="middle">${escapeXml(highlight.metaLine)}</text>
+  <text x="${W / 2}" y="1805" font-family="sans-serif" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Technical pattern data, not financial advice.</text>
+  <text x="${W / 2}" y="1835" font-family="sans-serif" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
+</svg>`;
+
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
+
+// Turns a bestCall.js result into the shape generateHighlightImage needs. Framed as "this
+// actually happened" -- a verified result since the call fired, not a live snapshot.
+function buildCallHighlight(call) {
+  const ageMs = Date.now() - call.firedAt;
+  const ageLabel = ageMs >= 86400000
+    ? `${Math.floor(ageMs / 86400000)}d ago`
+    : `${Math.max(1, Math.floor(ageMs / 3600000))}h ago`;
+  const firedDate = new Date(call.firedAt);
+  return {
+    badgeText: "Real Call",
+    headlineLines: ["This actually", "happened."],
+    captionText: "A verified result, not a live snapshot",
+    ticker: call.symbol,
+    pctChange: call.pctChange,
+    openPrice: call.entryPrice,
+    nowPrice: call.currentPrice,
+    closes: call.closes,
+    entryLabel: "Called at",
+    timeframeLabel: `Called via /${call.source.toLowerCase()} · ${ageLabel}`,
+    volumeSurgeRatio: null,
+    metaLine: `Fired ${firedDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} · Source: ${call.source}`
+  };
+}
+
+// Turns a findMover() winner into the same shape -- the fallback path when there's no eligible
+// past call yet, winner-only (no loser side exists in this format at all).
+function buildFallbackHighlight(winner) {
+  return {
+    badgeText: "Live Mover",
+    headlineLines: ["Today's biggest", "mover."],
+    captionText: "Live off today's session",
+    ticker: winner.symbol,
+    pctChange: winner.pctChange,
+    openPrice: winner.intraday.closes[0],
+    nowPrice: winner.price,
+    closes: winner.intraday.closes,
+    entryLabel: "Open",
+    timeframeLabel: formatSessionLabel(winner.intraday.times),
+    volumeSurgeRatio: winner.volumeSurgeRatio,
+    metaLine: formatMetaLine(winner.intraday.times)
+  };
+}
+
+module.exports = {
+  findMover, generateShortHtml, generateShortImage, generateHighlightImage,
+  buildCallHighlight, buildFallbackHighlight
+};

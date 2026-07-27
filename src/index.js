@@ -13,9 +13,10 @@ const degen = require("./lib/degen");
 const { findDegenCandidates } = degen;
 const { findBreakoutCandidates } = require("./lib/breakout");
 const { fetchTokenTradingData } = require("./lib/dexscreener");
+const { findBestCall } = require("./lib/bestCall");
 const {
   scanEmbed, alertEmbed, discoverEmbed, degenEmbed, degenClosestEmbed, volatilityEmbed, backtestEmbed,
-  alertHistoryEmbed, discoverHistoryEmbed, degenHistoryEmbed, portfolioEmbed, shortsEmbed, logoAttachment,
+  alertHistoryEmbed, discoverHistoryEmbed, degenHistoryEmbed, portfolioEmbed, highlightEmbed, logoAttachment,
   breakoutEmbed, breakoutClosestEmbed, breakoutHistoryEmbed
 } = require("./lib/embeds");
 
@@ -264,18 +265,31 @@ function nowInEastern() {
   return { date: `${get("year")}-${get("month")}-${get("day")}`, hhmm: `${get("hour")}:${get("minute")}` };
 }
 
-// Scans, renders the finished visual as a PNG, and posts it to the given channel as an
-// embedded image (not a file you have to download and open) alongside the stats embed.
-async function runShortsDrop(channel) {
-  const { winner, loser } = await shorts.findMover(SHORTS_UNIVERSE, SHORTS_SAMPLE_SIZE);
-  if (!winner || !loser) {
-    await channel.send("Shorts scan finished, but didn't find usable data -- skipped.");
-    return;
+// Prefers a real past call (see bestCall.js -- the single best-performing eligible entry across
+// /alerts, /discover, /degen, and /breakout history for this guild) over a live market scan,
+// since "this actually happened" is a stronger, more honest piece of content than "here's
+// today's biggest random mover." Falls back to a live scan only when nothing eligible has won
+// yet -- winner-only even then, no loser side exists in this format at all. Renders the finished
+// visual as a PNG and posts it to the given channel as an embedded image (not a file you have to
+// download and open) alongside the stats embed.
+async function runShortsDrop(guildId, channel) {
+  let highlight;
+  const best = await findBestCall(guildId);
+  if (best) {
+    highlight = shorts.buildCallHighlight(best);
+  } else {
+    const { winner } = await shorts.findMover(SHORTS_UNIVERSE, SHORTS_SAMPLE_SIZE);
+    if (!winner) {
+      await channel.send("Shorts scan finished, but didn't find usable data -- skipped.");
+      return;
+    }
+    highlight = shorts.buildFallbackHighlight(winner);
   }
-  const png = await shorts.generateShortImage(winner, loser);
+
+  const png = await shorts.generateHighlightImage(highlight);
   const filename = "stp-short.png";
   const file = new AttachmentBuilder(png, { name: filename });
-  await channel.send({ embeds: [shortsEmbed(winner, loser, "Crypto", filename)], files: [file] });
+  await channel.send({ embeds: [highlightEmbed(highlight, filename)], files: [file] });
 }
 
 // /discover scans the crypto candidate pool (not the watchlist) for coins whose RSI/MACD/EMA
@@ -529,7 +543,7 @@ client.once(Events.ClientReady, c => {
         watchlist.markShortRun(guildId, "1", date);
         try {
           const channel = await client.channels.fetch(channelId);
-          await runShortsDrop(channel);
+          await runShortsDrop(guildId, channel);
         } catch (err) {
           console.error(`Shorts drop (4pm) failed for guild ${guildId}: ${err.message}`);
         }
@@ -539,7 +553,7 @@ client.once(Events.ClientReady, c => {
         watchlist.markShortRun(guildId, "2", date);
         try {
           const channel = await client.channels.fetch(channelId);
-          await runShortsDrop(channel);
+          await runShortsDrop(guildId, channel);
         } catch (err) {
           console.error(`Shorts drop (8pm) failed for guild ${guildId}: ${err.message}`);
         }
@@ -838,9 +852,11 @@ client.on(Events.InteractionCreate, async interaction => {
             channelId: channel.id, lastRunDate1: null, lastRunDate2: null
           });
           await interaction.reply(
-            `Shorts on: small/mid-cap crypto winner/loser drops daily at 4:00pm and 8:00pm ET in ${channel}. ` +
-            "Each post includes a ready-to-use image -- save it and post it as a Short, or use it as-is. " +
-            "Posting to YouTube is still on you."
+            `Shorts on: daily drops at 4:00pm and 8:00pm ET in ${channel}. Each one features this server's ` +
+            "best-performing real past call (from /alerts, /discover, /degen, or /breakout history) if one's " +
+            "old enough to have a verified result -- otherwise it falls back to today's single biggest live " +
+            "crypto mover. Either way, only ever a winner -- no loser side in this format. Each post includes " +
+            "a ready-to-use image -- save it and post it as a Short, or use it as-is. Posting to YouTube is still on you."
           );
         } else if (sub === "off") {
           watchlist.setShortsSchedule(interaction.guildId, null);
@@ -848,7 +864,7 @@ client.on(Events.InteractionCreate, async interaction => {
         } else if (sub === "now") {
           const etaMin = Math.ceil((SHORTS_SAMPLE_SIZE * PACING_MS) / 60000);
           await interaction.reply(`Running a Shorts scan now (crypto) -- at ${SHORTS_SAMPLE_SIZE} candidates, that's about ${etaMin} min. I'll post here when it's ready.`);
-          runShortsDrop(interaction.channel).catch(err => {
+          runShortsDrop(interaction.guildId, interaction.channel).catch(err => {
             console.error(`Manual shorts run failed for guild ${interaction.guildId}: ${err.message}`);
             interaction.channel.send("Shorts scan failed partway through — check the bot logs.").catch(() => {});
           });

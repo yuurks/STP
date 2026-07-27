@@ -84,7 +84,7 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("shorts")
-    .setDescription("Automatic daily YouTube Shorts assets: today's biggest small/mid-cap crypto winner & loser")
+    .setDescription("Automatic daily YouTube Shorts assets: this server's best real call, or today's biggest mover")
     .setDefaultMemberPermissions(MANAGE_GUILD_ONLY)
     .addSubcommand(sc =>
       sc.setName("on").setDescription("Turn on the daily Shorts drop (4pm and 8pm ET)")
