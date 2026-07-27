@@ -60,24 +60,40 @@ function evaluateStopAware(entry, rows) {
   };
 }
 
+// Granularity scales with how long ago the call fired -- a call from a few hours ago gets fine
+// detail (5-min bars), a multi-day-old one gets coarser bars wide enough to actually still
+// contain the entry, rather than one fixed window that's either too sparse for a recent call or
+// too narrow to reach back far enough for an old one. Only combos confirmed live against
+// GeckoTerminal's real API (minute bars: 1/5/15 only -- 30 returns 400; hour bars: 1). Each
+// window is sized at ~4x the call's actual age, not just barely covering it, so there's real
+// context on both sides of the entry marker rather than it sitting right at the edge.
+function pickGranularity(ageMs) {
+  const ageHours = ageMs / 3600000;
+  if (ageHours <= 2) return { timeframe: "minute", aggregate: 5, limit: 96 };   // 8h window
+  if (ageHours <= 12) return { timeframe: "minute", aggregate: 15, limit: 192 }; // 48h window
+  if (ageHours <= 96) return { timeframe: "hour", aggregate: 1, limit: 384 };   // 16d window
+  return { timeframe: "hour", aggregate: 1, limit: 500 }; // GeckoTerminal's practical max for hourly
+}
+
 // GeckoTerminal has real historical OHLCV for DEX pools -- including brand-new Solana pump.fun/
 // PumpSwap pairs, confirmed live -- which DexScreener's own API cannot provide at all. This is
 // what lets /degen and /breakout picks get real candlesticks too, not just a 2-point line, PROVIDED
 // the alert was logged with a pairAddress (added alongside this feature -- older log entries
-// won't have one and gracefully keep the 2-point line instead). Hourly bars over a week: coarse
-// enough that a multi-day-old call still fits in the window, fine enough to look like a real
-// chart. Never thrown on failure -- a missing/delisted/too-new pool just means no enrichment,
-// not a broken /shorts run.
+// won't have one and gracefully keep the 2-point line instead). Never thrown on failure -- a
+// missing/delisted/too-new pool just means no enrichment, not a broken /shorts run.
 async function tryFetchRealOhlc(entry) {
   if (!entry.pairAddress) return null;
   try {
-    const candles = await fetchOhlcv(entry.pairAddress, { timeframe: "hour", aggregate: 1, limit: 168 });
+    const candles = await fetchOhlcv(entry.pairAddress, pickGranularity(Date.now() - entry.timestamp));
     if (candles.length < 2) return null;
-    let entryIndex = candles.findIndex(c => c.time >= entry.timestamp);
-    if (entryIndex === -1) entryIndex = candles.length - 1;
+    // If even the OLDEST fetched candle is already newer than the entry, the entry genuinely
+    // isn't visible in this window -- that's a real "not enough history" case, not "it's at the
+    // start," and showing a marker on the wrong candle would be worse than showing none.
+    if (candles[0].time > entry.timestamp) return null;
+    const entryIndex = candles.findIndex(c => c.time >= entry.timestamp);
     return {
       ohlc: candles.map(c => ({ open: c.open, high: c.high, low: c.low, close: c.close })),
-      entryIndex
+      entryIndex: entryIndex === -1 ? candles.length - 1 : entryIndex
     };
   } catch (err) {
     console.error(`Best-call GeckoTerminal lookup failed for ${entry.symbol}: ${err.message}`);

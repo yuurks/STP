@@ -303,15 +303,22 @@ if you want a different role than whoever already has Manage Server.
   source**: DexScreener's own API genuinely has no historical candles (see above), but
   [GeckoTerminal](https://www.geckoterminal.com/) (CoinGecko's DEX-data arm) has a free, keyless
   public OHLCV endpoint that does -- confirmed live against multiple real Solana pools, including
-  brand-new pump.fun/PumpSwap pairs a few hours old. `src/lib/geckoterminal.js` fetches hourly
-  candles for the pool address already captured when the alert was logged (`pairAddress`, stored
-  alongside the existing token address), and `bestCall.js` only ever spends this lookup on the
-  single winning pick, not every eligible candidate. The buy entry is marked directly on the chart
-  (a ring + "BUY" label, distinct from the plain dot used for "now") at the exact logged entry
-  price, not just whatever a nearby candle's close happens to be, so it lines up exactly with the
-  "Called at $X" text above it. Falls back to the honest 2-point entry→now line if the pool is
-  too new/delisted for GeckoTerminal to have data, the lookup fails, or the alert was logged
-  before this feature existed (no stored `pairAddress`) -- never fabricated in between either way.
+  brand-new pump.fun/PumpSwap pairs a few hours old, for the pool address already captured when
+  the alert was logged (`pairAddress`, stored alongside the existing token address). `bestCall.js`
+  only ever spends this lookup on the single winning pick, not every eligible candidate. Candle
+  granularity scales with how long ago the call fired (`pickGranularity` in `bestCall.js`) -- a
+  few hours old gets fine 5-min bars, multi-day-old gets coarser hourly bars wide enough to still
+  reach back that far -- rather than one fixed window that's either too sparse for a recent call
+  or too narrow to contain an old one. Only combos confirmed live against GeckoTerminal's real API
+  are used (minute bars: 1/5/15 only, confirmed 30 returns 400; hour bars: 1). If even the oldest
+  fetched candle is newer than the entry, that's treated as "not enough history," not "it's at the
+  start" -- a marker on the wrong candle would be worse than no marker. The buy entry is marked
+  directly on the chart (a ring + "BUY" label, distinct from the plain dot used for "now") at the
+  exact logged entry price, not just whatever a nearby candle's close happens to be, so it lines
+  up exactly with the "Called at $X" text above it. Falls back to the honest 2-point entry→now
+  line if the pool is too new/delisted for GeckoTerminal to have data, the lookup fails, or the
+  alert was logged before this feature existed (no stored `pairAddress`) -- never fabricated in
+  between either way.
 - **`/shorts` is crypto-only, skewed toward small/mid-cap**: `crypto.txt` is compiled roughly
   biggest-to-smallest by market cap, so the scan pool skips the top ~50 entries (the majors) and
   samples from the rest -- an approximation, not real live market-cap data (Twelve Data's free
