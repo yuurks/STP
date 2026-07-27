@@ -75,6 +75,35 @@ function pickGranularity(ageMs) {
   return { timeframe: "hour", aggregate: 1, limit: 500 }; // GeckoTerminal's practical max for hourly
 }
 
+// The chart is only ~700px wide -- 500 real candles crammed into that renders as unreadable
+// noise, confirmed visually against a real render (BONK's actual multi-day history at hourly
+// granularity). Groups every run of `bucketSize` real candles into one aggregated candle
+// (open = the group's first open, close = the group's last close, high/low = the group's real
+// extremes) rather than just dropping data -- a real resampling, the same thing every
+// candlestick charting library does when zoomed out, not a fabrication. entryIndex is remapped
+// to whichever resampled bucket the real entry candle landed in.
+const MAX_RENDERED_CANDLES = 48;
+function resampleOhlc(candles, entryIndex) {
+  if (candles.length <= MAX_RENDERED_CANDLES) {
+    return { candles: candles.map(c => ({ open: c.open, high: c.high, low: c.low, close: c.close })), entryIndex };
+  }
+
+  const bucketSize = Math.ceil(candles.length / MAX_RENDERED_CANDLES);
+  const resampled = [];
+  let newEntryIndex = 0;
+  for (let i = 0; i < candles.length; i += bucketSize) {
+    const bucket = candles.slice(i, i + bucketSize);
+    resampled.push({
+      open: bucket[0].open,
+      high: Math.max(...bucket.map(c => c.high)),
+      low: Math.min(...bucket.map(c => c.low)),
+      close: bucket[bucket.length - 1].close
+    });
+    if (entryIndex >= i && entryIndex < i + bucketSize) newEntryIndex = resampled.length - 1;
+  }
+  return { candles: resampled, entryIndex: newEntryIndex };
+}
+
 // GeckoTerminal has real historical OHLCV for DEX pools -- including brand-new Solana pump.fun/
 // PumpSwap pairs, confirmed live -- which DexScreener's own API cannot provide at all. This is
 // what lets /degen and /breakout picks get real candlesticks too, not just a 2-point line, PROVIDED
@@ -90,11 +119,11 @@ async function tryFetchRealOhlc(entry) {
     // isn't visible in this window -- that's a real "not enough history" case, not "it's at the
     // start," and showing a marker on the wrong candle would be worse than showing none.
     if (candles[0].time > entry.timestamp) return null;
-    const entryIndex = candles.findIndex(c => c.time >= entry.timestamp);
-    return {
-      ohlc: candles.map(c => ({ open: c.open, high: c.high, low: c.low, close: c.close })),
-      entryIndex: entryIndex === -1 ? candles.length - 1 : entryIndex
-    };
+    const rawEntryIndex = candles.findIndex(c => c.time >= entry.timestamp);
+    const { candles: resampled, entryIndex } = resampleOhlc(
+      candles, rawEntryIndex === -1 ? candles.length - 1 : rawEntryIndex
+    );
+    return { ohlc: resampled, entryIndex };
   } catch (err) {
     console.error(`Best-call GeckoTerminal lookup failed for ${entry.symbol}: ${err.message}`);
     return null;
