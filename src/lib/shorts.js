@@ -371,12 +371,12 @@ async function generateShortImage(winner, loser) {
     closes: loser.intraday.closes, timeframe: loserSessionLabel, volumeSurgeRatio: loser.volumeSurgeRatio
   })}
 
-  <rect x="${W / 2 - 230}" y="1610" width="460" height="90" rx="45" fill="${COLORS.cta}"/>
-  <text x="${W / 2}" y="1666" font-family="STPSans" font-size="35" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
+  <rect x="${W / 2 - 230}" y="1560" width="460" height="90" rx="45" fill="${COLORS.cta}"/>
+  <text x="${W / 2}" y="1616" font-family="STPSans" font-size="35" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
 
-  <text x="${W / 2}" y="1760" font-family="STPSans" font-size="25" font-weight="700" fill="${COLORS.textSecondary}" text-anchor="middle">${escapeXml(metaLine)}</text>
-  <text x="${W / 2}" y="1805" font-family="STPSans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Technical pattern data, not financial advice.</text>
-  <text x="${W / 2}" y="1835" font-family="STPSans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
+  <text x="${W / 2}" y="1710" font-family="STPSans" font-size="25" font-weight="700" fill="${COLORS.textSecondary}" text-anchor="middle">${escapeXml(metaLine)}</text>
+  <text x="${W / 2}" y="1755" font-family="STPSans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Technical pattern data, not financial advice.</text>
+  <text x="${W / 2}" y="1785" font-family="STPSans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
 </svg>`;
 
   return sharp(Buffer.from(svg)).png().toBuffer();
@@ -393,6 +393,11 @@ async function generateShortImage(winner, loser) {
 // ever populated for /alerts and /discover picks) renders as actual candlesticks when present;
 // null/absent falls back to the `.closes` line chart -- /degen and /breakout never have real
 // candle history to draw more than a 2-point line from, and this never fabricates one.
+//
+// The CTA button sits at y=1470, not lower: once this image is actually posted as a YouTube
+// Short, YouTube's own UI (Subscribe button, channel name, caption) overlays roughly the bottom
+// ~20% of the screen -- a CTA any lower gets hidden behind that chrome. 1470 clears it with real
+// margin both to the card above (which ends at 1440) and to YouTube's overlay below.
 async function generateHighlightImage(highlight) {
   if (!highlight?.closes?.length) {
     throw new Error("highlight is missing closes -- needs at least a 2-point [entry, now] line");
@@ -430,12 +435,12 @@ async function generateHighlightImage(highlight) {
     entryIndex: highlight.entryIndex, entryPriceRaw: highlight.openPrice, showEntryMarker: true
   })}
 
-  <rect x="${W / 2 - 230}" y="1610" width="460" height="90" rx="45" fill="${COLORS.cta}"/>
-  <text x="${W / 2}" y="1666" font-family="STPSans" font-size="35" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
+  <rect x="${W / 2 - 230}" y="1470" width="460" height="90" rx="45" fill="${COLORS.cta}"/>
+  <text x="${W / 2}" y="1526" font-family="STPSans" font-size="35" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
 
-  <text x="${W / 2}" y="1760" font-family="STPSans" font-size="25" font-weight="700" fill="${COLORS.textSecondary}" text-anchor="middle">${escapeXml(highlight.metaLine)}</text>
-  <text x="${W / 2}" y="1805" font-family="STPSans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Technical pattern data, not financial advice.</text>
-  <text x="${W / 2}" y="1835" font-family="STPSans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
+  <text x="${W / 2}" y="1620" font-family="STPSans" font-size="25" font-weight="700" fill="${COLORS.textSecondary}" text-anchor="middle">${escapeXml(highlight.metaLine)}</text>
+  <text x="${W / 2}" y="1665" font-family="STPSans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Technical pattern data, not financial advice.</text>
+  <text x="${W / 2}" y="1695" font-family="STPSans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
 </svg>`;
 
   return sharp(Buffer.from(svg)).png().toBuffer();
