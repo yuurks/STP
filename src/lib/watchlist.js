@@ -278,12 +278,14 @@ function addDegenAlerted(guildId, addresses) {
 // there's no verdict (every degen alert is the same "cleared the bar" claim) and price is
 // stored under `price` (not `priceUsd`) to stay consistent with the alerts/discover history
 // schema. address is what /degen history uses to re-look-up the token on DexScreener later.
+// pairAddress (the pool address, distinct from the token's own mint address) is what
+// bestCall.js uses to pull real historical candles from GeckoTerminal -- DexScreener has none.
 const MAX_DEGEN_ALERT_HISTORY = 200;
-function logDegenAlert(guildId, address, symbol, price, url) {
+function logDegenAlert(guildId, address, symbol, price, url, pairAddress) {
   const all = loadAll();
   const guild = ensureGuild(all, guildId);
   guild.degenAlertHistory = guild.degenAlertHistory || [];
-  guild.degenAlertHistory.push({ address, symbol, price, url, timestamp: Date.now() });
+  guild.degenAlertHistory.push({ address, symbol, price, url, pairAddress, timestamp: Date.now() });
   if (guild.degenAlertHistory.length > MAX_DEGEN_ALERT_HISTORY) {
     guild.degenAlertHistory = guild.degenAlertHistory.slice(-MAX_DEGEN_ALERT_HISTORY);
   }
@@ -335,11 +337,11 @@ function addBreakoutAlerted(guildId, addresses) {
 }
 
 const MAX_BREAKOUT_ALERT_HISTORY = 200;
-function logBreakoutAlert(guildId, address, symbol, price, url) {
+function logBreakoutAlert(guildId, address, symbol, price, url, pairAddress) {
   const all = loadAll();
   const guild = ensureGuild(all, guildId);
   guild.breakoutAlertHistory = guild.breakoutAlertHistory || [];
-  guild.breakoutAlertHistory.push({ address, symbol, price, url, timestamp: Date.now() });
+  guild.breakoutAlertHistory.push({ address, symbol, price, url, pairAddress, timestamp: Date.now() });
   if (guild.breakoutAlertHistory.length > MAX_BREAKOUT_ALERT_HISTORY) {
     guild.breakoutAlertHistory = guild.breakoutAlertHistory.slice(-MAX_BREAKOUT_ALERT_HISTORY);
   }

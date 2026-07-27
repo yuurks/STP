@@ -190,7 +190,10 @@ function chartPaths(closes, x, y, w, h) {
   const line = points.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
   const area = line + ` L${points[points.length - 1][0].toFixed(1)},${(y + h - pad).toFixed(1)} L${points[0][0].toFixed(1)},${(y + h - pad).toFixed(1)} Z`;
   const last = points[points.length - 1];
-  return { line, area, lastX: last[0], lastY: last[1], min, max };
+  const first = points[0];
+  // First point is always the entry -- closes[0] is the logged entry price by construction
+  // (see bestCall.js), never a fabricated earlier value.
+  return { line, area, lastX: last[0], lastY: last[1], entryX: first[0], entryY: first[1], min, max };
 }
 
 // Real candlesticks from real daily OHLC (see bestCall.js -- only /alerts and /discover picks
@@ -198,18 +201,23 @@ function chartPaths(closes, x, y, w, h) {
 // never reach this function). Standard convention: wick = high/low, body = open/close, green
 // body when the day closed up, red when it closed down -- same color language as an actual
 // trading chart, not this bot's own winner/loser palette.
-function candlePaths(ohlc, x, y, w, h) {
+// entryIndex/entryPrice mark where the call actually fired (see bestCall.js) -- entryPrice, not
+// that candle's own close, sets the marker's Y position, so the circled entry lines up exactly
+// with the "Called at $X" text above it rather than whatever a nearby candle's close happens to
+// be (usually near-identical, but this keeps them exact rather than approximate).
+function candlePaths(ohlc, x, y, w, h, entryIndex, entryPrice) {
   const pad = 6;
   const values = ohlc.flatMap(c => [c.high, c.low]);
-  const min = Math.min(...values), max = Math.max(...values);
+  const min = Math.min(...values, entryPrice), max = Math.max(...values, entryPrice);
   const range = (max - min) || 1;
   const n = ohlc.length;
   const slotW = n > 0 ? (w - pad * 2) / n : 0;
   const bodyW = Math.max(3, Math.min(28, slotW * 0.6));
   const toY = v => y + pad + (h - pad * 2) * (1 - (v - min) / range);
+  const slotX = i => x + pad + slotW * (i + 0.5);
 
   const candles = ohlc.map((c, i) => {
-    const cx = x + pad + slotW * (i + 0.5);
+    const cx = slotX(i);
     const isUp = c.close >= c.open;
     const color = isUp ? COLORS.winner : COLORS.loser;
     const bodyTop = toY(Math.max(c.open, c.close));
@@ -222,7 +230,8 @@ function candlePaths(ohlc, x, y, w, h) {
 
   const lastX = x + pad + slotW * (n - 0.5);
   const lastY = toY(ohlc[n - 1].close);
-  return { candles, lastX, lastY, min, max };
+  const clampedEntryIndex = Math.max(0, Math.min(n - 1, entryIndex ?? 0));
+  return { candles, lastX, lastY, min, max, entryX: slotX(clampedEntryIndex), entryY: toY(entryPrice) };
 }
 
 // Gridlines + a subtle frame behind the chart itself (candlestick or line) -- the piece that was
@@ -251,19 +260,38 @@ function chartFrame(x, y, w, h, min, max) {
   );
 }
 
-function cardSvg({ x, y, w, h, accent, accentFill, tagLabel, ticker, pctChange, openPrice, nowPrice, closes, ohlc, timeframe, volumeSurgeRatio, chartH = 170, entryLabel = "Open" }) {
+// entryIndex/entryPriceRaw locate the actual buy entry on the chart (see bestCall.js) -- drawn
+// as a distinct unfilled ring + "BUY" tag, never the same solid dot used for "now", so the two
+// are never confused for each other at a glance.
+function entryMarkerSvg(entryX, entryY, accent) {
+  return (
+    `<circle cx="${entryX.toFixed(1)}" cy="${entryY.toFixed(1)}" r="13" fill="none" stroke="${accent}" stroke-width="3"/>` +
+    `<circle cx="${entryX.toFixed(1)}" cy="${entryY.toFixed(1)}" r="4" fill="${accent}"/>` +
+    `<text x="${entryX.toFixed(1)}" y="${(entryY - 20).toFixed(1)}" font-family="STPSans" font-size="17" font-weight="800" letter-spacing="0.5" fill="${accent}" text-anchor="middle">BUY</text>`
+  );
+}
+
+// showEntryMarker defaults false so the old dual-card winner/loser format (generateShortImage,
+// only used by the standalone dev scripts now) keeps its original look -- a "BUY" ring makes
+// sense on a /shorts best-call highlight, not on a "loser" card in the old format, which has no
+// real buy-entry concept at all.
+function cardSvg({ x, y, w, h, accent, accentFill, tagLabel, ticker, pctChange, openPrice, nowPrice, closes, ohlc, entryIndex, entryPriceRaw, timeframe, volumeSurgeRatio, chartH = 170, entryLabel = "Open", showEntryMarker = false }) {
   const pad = 40;
   const chartY = y + h - pad - chartH - 40;
   const chartX = x + pad, chartW = w - pad * 2;
 
   const useCandles = Array.isArray(ohlc) && ohlc.length >= 2;
   const frame = useCandles
-    ? (() => { const c = candlePaths(ohlc, chartX, chartY, chartW, chartH); return { ...c, draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max) + c.candles }; })()
+    ? (() => {
+        const c = candlePaths(ohlc, chartX, chartY, chartW, chartH, entryIndex, entryPriceRaw);
+        return { ...c, draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max) + c.candles + (showEntryMarker ? entryMarkerSvg(c.entryX, c.entryY, accent) : "") };
+      })()
     : (() => { const c = chartPaths(closes, chartX, chartY, chartW, chartH); return {
         ...c,
         draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max) +
           `<path d="${c.area}" fill="${accentFill}"/>` +
           `<path d="${c.line}" fill="none" stroke="${accent}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>` +
+          (showEntryMarker ? entryMarkerSvg(c.entryX, c.entryY, accent) : "") +
           `<circle cx="${c.lastX.toFixed(1)}" cy="${c.lastY.toFixed(1)}" r="9" fill="${accent}"/>`
       }; })();
 
@@ -394,7 +422,8 @@ async function generateHighlightImage(highlight) {
     tagLabel: highlight.badgeText, ticker: highlight.ticker, pctChange: highlight.pctChange,
     openPrice: formatMoney(highlight.openPrice), nowPrice: formatMoney(highlight.nowPrice),
     closes: highlight.closes, ohlc: highlight.ohlc, timeframe: highlight.timeframeLabel, volumeSurgeRatio: highlight.volumeSurgeRatio,
-    chartH: 480, entryLabel: highlight.entryLabel
+    chartH: 480, entryLabel: highlight.entryLabel,
+    entryIndex: highlight.entryIndex, entryPriceRaw: highlight.openPrice, showEntryMarker: true
   })}
 
   <rect x="${W / 2 - 230}" y="1610" width="460" height="90" rx="45" fill="${COLORS.cta}"/>
@@ -426,6 +455,7 @@ function buildCallHighlight(call) {
     nowPrice: call.currentPrice,
     closes: call.closes,
     ohlc: call.ohlc || null,
+    entryIndex: call.entryIndex ?? 0,
     entryLabel: "Called at",
     timeframeLabel: `Called via /${call.source.toLowerCase()} · ${ageLabel}`,
     volumeSurgeRatio: null,

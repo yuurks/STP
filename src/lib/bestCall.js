@@ -6,11 +6,17 @@
 //
 // Reuses the same evaluation rules the /x history commands already use (see index.js):
 // /alerts and /discover are stop-aware (daily candles exist, so a 2x-ATR stop can be replayed);
-// /degen and /breakout are raw current-price-vs-logged-price (no candles exist for either).
+// /degen and /breakout are raw current-price-vs-logged-price for finding the winner, since
+// DexScreener itself has no historical candles -- but the winning pick gets a real-candle
+// enrichment attempt from GeckoTerminal's free OHLCV API afterward (see geckoterminal.js),
+// which does have real history for these pools. Falls back to an honest 2-point entry->now line
+// if that's unavailable (an older logged alert with no stored pairAddress, a delisted/too-new
+// pool, or the lookup just failing) -- never fabricated in between either way.
 
 const watchlist = require("./watchlist");
 const { fetchDailySeries } = require("./marketData");
 const { fetchTokenTradingData } = require("./dexscreener");
+const { fetchOhlcv } = require("./geckoterminal");
 
 // Mirrors the thresholds index.js's /x history commands use -- an entry isn't evaluated until
 // it's actually had time to produce a real result.
@@ -42,16 +48,41 @@ function evaluateStopAware(entry, rows) {
 
   const pctChange = ((exitPrice - entry.price) / entry.price) * 100;
   // Trajectory since firing, for the chart -- the fired-on candle through today, real daily
-  // OHLC, not synthetic. /alerts and /discover are the only sources with real candle history
-  // (Twelve Data), so this is the only path that can ever produce actual candlesticks -- /degen
-  // and /breakout never have this, DexScreener has no historical candles at all for either.
+  // OHLC, not synthetic. entryIndex is always 0: sinceFired starts exactly at the fired date by
+  // construction, so the entry marker always sits on the first candle.
   const sinceFired = rows.filter(r => r.date >= firedDate);
   return {
     pctChange,
     currentPrice: exitPrice,
     closes: sinceFired.map(r => r.close),
-    ohlc: sinceFired.map(r => ({ open: r.open, high: r.high, low: r.low, close: r.close }))
+    ohlc: sinceFired.map(r => ({ open: r.open, high: r.high, low: r.low, close: r.close })),
+    entryIndex: 0
   };
+}
+
+// GeckoTerminal has real historical OHLCV for DEX pools -- including brand-new Solana pump.fun/
+// PumpSwap pairs, confirmed live -- which DexScreener's own API cannot provide at all. This is
+// what lets /degen and /breakout picks get real candlesticks too, not just a 2-point line, PROVIDED
+// the alert was logged with a pairAddress (added alongside this feature -- older log entries
+// won't have one and gracefully keep the 2-point line instead). Hourly bars over a week: coarse
+// enough that a multi-day-old call still fits in the window, fine enough to look like a real
+// chart. Never thrown on failure -- a missing/delisted/too-new pool just means no enrichment,
+// not a broken /shorts run.
+async function tryFetchRealOhlc(entry) {
+  if (!entry.pairAddress) return null;
+  try {
+    const candles = await fetchOhlcv(entry.pairAddress, { timeframe: "hour", aggregate: 1, limit: 168 });
+    if (candles.length < 2) return null;
+    let entryIndex = candles.findIndex(c => c.time >= entry.timestamp);
+    if (entryIndex === -1) entryIndex = candles.length - 1;
+    return {
+      ohlc: candles.map(c => ({ open: c.open, high: c.high, low: c.low, close: c.close })),
+      entryIndex
+    };
+  } catch (err) {
+    console.error(`Best-call GeckoTerminal lookup failed for ${entry.symbol}: ${err.message}`);
+    return null;
+  }
 }
 
 // /alerts and /discover both fire off daily-candle signals against the same evaluation rules --
@@ -83,15 +114,17 @@ async function bestFromCandleSource(guildId, source, getHistory) {
         source, symbol: entry.symbol, verdict: entry.verdict,
         entryPrice: entry.price, currentPrice: result.currentPrice,
         pctChange: result.pctChange, firedAt: entry.timestamp,
-        closes: result.closes, ohlc: result.ohlc
+        closes: result.closes, ohlc: result.ohlc, entryIndex: result.entryIndex
       };
     }
   }
   return best;
 }
 
-// /degen and /breakout have no historical candles at all (see dexscreener.js) -- just a raw
-// current-price-vs-logged-price comparison, same as their own /x history commands.
+// /degen and /breakout have no historical candles from DexScreener itself (see dexscreener.js)
+// -- the winning pick, if any, gets a real-candle enrichment attempt from GeckoTerminal below;
+// this part is just the raw current-price-vs-logged-price comparison used to find the winner,
+// same as their own /x history commands.
 async function bestFromDexScreenerSource(guildId, source, getHistory) {
   const history = getHistory(guildId);
   const eligible = history.filter(h => Date.now() - h.timestamp >= DEX_EVAL_MIN_AGE_MS);
@@ -114,6 +147,7 @@ async function bestFromDexScreenerSource(guildId, source, getHistory) {
   }
 
   let best = null;
+  let winningEntry = null;
   for (const entry of eligible) {
     const current = currentByAddress.get(entry.address);
     const currentPrice = current ? parseFloat(current.priceUsd) : NaN;
@@ -124,13 +158,24 @@ async function bestFromDexScreenerSource(guildId, source, getHistory) {
         source, symbol: entry.symbol, verdict: null,
         entryPrice: entry.price, currentPrice,
         pctChange, firedAt: entry.timestamp,
-        // No candle history exists for these -- an honest 2-point line (entry -> now), not a
-        // fabricated trajectory in between. ohlc stays null so the renderer knows not to attempt
-        // candlesticks here.
-        closes: [entry.price, currentPrice], ohlc: null
+        // Honest 2-point line (entry -> now) by default, not a fabricated trajectory --
+        // replaced below with real candles if GeckoTerminal has them for this pool.
+        closes: [entry.price, currentPrice], ohlc: null, entryIndex: 0
       };
+      winningEntry = entry;
     }
   }
+
+  // Only the single winning pick ever gets a real-candle lookup -- never spent on every
+  // eligible candidate, so this stays cheap regardless of how much history exists.
+  if (best && winningEntry) {
+    const enriched = await tryFetchRealOhlc(winningEntry);
+    if (enriched) {
+      best.ohlc = enriched.ohlc;
+      best.entryIndex = enriched.entryIndex;
+    }
+  }
+
   return best;
 }
 

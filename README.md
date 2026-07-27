@@ -299,6 +299,19 @@ if you want a different role than whoever already has Manage Server.
   turning this on never retroactively announces whatever's already on the channel, only uploads
   from that point forward -- verified end-to-end (seed → no false announce → simulated new
   upload → announces once → checked again → no duplicate).
+- **`/degen`/`/breakout` best-call charts get real candlesticks too, via a second free data
+  source**: DexScreener's own API genuinely has no historical candles (see above), but
+  [GeckoTerminal](https://www.geckoterminal.com/) (CoinGecko's DEX-data arm) has a free, keyless
+  public OHLCV endpoint that does -- confirmed live against multiple real Solana pools, including
+  brand-new pump.fun/PumpSwap pairs a few hours old. `src/lib/geckoterminal.js` fetches hourly
+  candles for the pool address already captured when the alert was logged (`pairAddress`, stored
+  alongside the existing token address), and `bestCall.js` only ever spends this lookup on the
+  single winning pick, not every eligible candidate. The buy entry is marked directly on the chart
+  (a ring + "BUY" label, distinct from the plain dot used for "now") at the exact logged entry
+  price, not just whatever a nearby candle's close happens to be, so it lines up exactly with the
+  "Called at $X" text above it. Falls back to the honest 2-point entry→now line if the pool is
+  too new/delisted for GeckoTerminal to have data, the lookup fails, or the alert was logged
+  before this feature existed (no stored `pairAddress`) -- never fabricated in between either way.
 - **`/shorts` is crypto-only, skewed toward small/mid-cap**: `crypto.txt` is compiled roughly
   biggest-to-smallest by market cap, so the scan pool skips the top ~50 entries (the majors) and
   samples from the rest -- an approximation, not real live market-cap data (Twelve Data's free

@@ -428,7 +428,7 @@ async function runDegenScan(guildId, channel, { includeClosest = false } = {}) {
   if (candidates.length) {
     watchlist.addDegenAlerted(guildId, candidates.map(c => c.baseToken.address));
     for (const c of candidates) {
-      watchlist.logDegenAlert(guildId, c.baseToken.address, c.baseToken.symbol, parseFloat(c.priceUsd) || 0, c.url);
+      watchlist.logDegenAlert(guildId, c.baseToken.address, c.baseToken.symbol, parseFloat(c.priceUsd) || 0, c.url, c.pairAddress);
     }
     await channel.send({ embeds: [degenEmbed(candidates)], files: [logoAttachment()] });
   } else if (closest) {
@@ -443,7 +443,7 @@ async function runBreakoutScan(guildId, channel, { includeClosest = false } = {}
   if (candidates.length) {
     watchlist.addBreakoutAlerted(guildId, candidates.map(c => c.baseToken.address));
     for (const c of candidates) {
-      watchlist.logBreakoutAlert(guildId, c.baseToken.address, c.baseToken.symbol, parseFloat(c.priceUsd) || 0, c.url);
+      watchlist.logBreakoutAlert(guildId, c.baseToken.address, c.baseToken.symbol, parseFloat(c.priceUsd) || 0, c.url, c.pairAddress);
     }
     await channel.send({ embeds: [breakoutEmbed(candidates)], files: [logoAttachment()] });
   } else if (closest) {
