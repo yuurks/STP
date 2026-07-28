@@ -8,22 +8,37 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-// The embedded @font-face fix (below) still silently fails on Railway despite working locally --
-// confirmed via a real screenshot: every rendered text element still comes out as tofu boxes even
-// with the font bytes correctly embedded in the SVG. Root cause: sharp's bundled librsvg still
-// routes text through fontconfig/pango for font matching, and fontconfig needs to build a cache
-// on first use -- a normal dev machine's HOME is a real, long-lived, writable directory, so this
-// always silently succeeds there without anyone noticing it's happening at all. A minimal
-// container frequently runs as a non-root user with HOME pointing at something unwritable (or
-// unset), so the cache write fails -- and that failure never surfaces as a JS exception (it
-// happens inside native code sharp calls into), it just means fontconfig can't resolve ANY font,
-// including the one we just embedded, and every `<text>` element silently renders as an empty
-// glyph box instead. Forcing HOME/XDG_CACHE_HOME to the OS temp dir -- guaranteed writable in any
-// Node environment, containerized or not -- before sharp is even required is the standard fix for
-// this exact class of bug. Set unconditionally, not just when unset, since the real problem on
-// Railway is very likely an already-set-but-unwritable HOME, not a missing one.
+// Text rendering went through two real bugs on Railway before landing here -- both only visible
+// by actually rendering the deployed output, never from reading the code:
+//   1. Tofu boxes (empty glyph outlines): fontconfig couldn't write its cache because HOME pointed
+//      at something unwritable in the container. Fixed by forcing HOME/XDG_CACHE_HOME below.
+//   2. Wrong, garbled (CJK-looking) glyphs -- worse, in a way, because it *looked* like text had
+//      rendered: once fontconfig could actually run, our @font-face-embedded "STPSans"/"STPMono"
+//      names still didn't resolve (librsvg's CSS support for @font-face + base64 data URIs is
+//      known to be inconsistent across versions -- it silently failed to register the family
+//      instead of erroring), so fontconfig fell back to matching "sans-serif" against whatever
+//      real font happened to be installed in the container for unrelated reasons -- in this case
+//      a CJK font, which has glyphs for basically every codepoint but the wrong shapes entirely.
+// The fix for #2: stop asking librsvg to parse embedded font bytes at all. Instead, point
+// fontconfig directly at our actual DejaVu .ttf files on disk (already committed under
+// assets/fonts/) via a generated fonts.conf, and reference their real family names ("DejaVu
+// Sans" / "DejaVu Sans Mono") in the SVG. This is fontconfig's normal, well-supported font
+// discovery path -- the same one that finds real system fonts on a dev machine -- so it doesn't
+// depend on librsvg's CSS parser at all.
 process.env.HOME = os.tmpdir();
 process.env.XDG_CACHE_HOME = os.tmpdir();
+
+const fontconfigCacheDir = path.join(os.tmpdir(), "stp-fontconfig-cache");
+fs.mkdirSync(fontconfigCacheDir, { recursive: true });
+const fontconfigConfPath = path.join(os.tmpdir(), "stp-fonts.conf");
+fs.writeFileSync(fontconfigConfPath, `<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig>
+  <dir>${path.join(__dirname, "..", "..", "assets", "fonts")}</dir>
+  <cachedir>${fontconfigCacheDir}</cachedir>
+</fontconfig>
+`);
+process.env.FONTCONFIG_FILE = fontconfigConfPath;
 
 const sharp = require("sharp");
 const { fetchDailySeries, fetchIntradaySeries } = require("./marketData");
@@ -114,31 +129,11 @@ function formatMetaLine(times) {
 
 const TEMPLATE_PATH = path.join(__dirname, "..", "..", "scripts", "movers-short.template.html");
 const LOGO_PATH = path.join(__dirname, "..", "..", "assets", "logo.png");
-const FONTS_DIR = path.join(__dirname, "..", "..", "assets", "fonts");
 
-// Rendering these SVGs relies on `sharp`'s bundled librsvg finding an actual font file to draw
-// text with, matched by font-family name through its bundled fontconfig -- fontconfig itself
-// ships with sharp, but it still has to find real font FILES on the host to match against, and a
-// minimal deploy container (confirmed on Railway) can have none installed at all, so text without
-// this comes out as tofu boxes there even though it renders fine on a normal dev machine with
-// real system fonts. Embedding the font's actual bytes as a base64 @font-face makes rendering
-// depend only on this file, never on the host -- verified end-to-end against this exact sharp
-// version. DejaVu Sans/Sans-Mono: public domain-derived (Bitstream Vera + public domain
-// additions), fully redistributable, excellent Unicode coverage (confirmed: →, ·, × all render).
-let fontDefsCache = null;
-function fontDefs() {
-  if (fontDefsCache) return fontDefsCache;
-  const toBase64 = name => fs.readFileSync(path.join(FONTS_DIR, name)).toString("base64");
-  fontDefsCache = `<defs><style>
-    @font-face { font-family: "STPSans"; font-weight: 400; src: url(data:font/ttf;base64,${toBase64("DejaVuSans.ttf")}); }
-    @font-face { font-family: "STPSans"; font-weight: 600; src: url(data:font/ttf;base64,${toBase64("DejaVuSans-Bold.ttf")}); }
-    @font-face { font-family: "STPSans"; font-weight: 700; src: url(data:font/ttf;base64,${toBase64("DejaVuSans-Bold.ttf")}); }
-    @font-face { font-family: "STPSans"; font-weight: 800; src: url(data:font/ttf;base64,${toBase64("DejaVuSans-Bold.ttf")}); }
-    @font-face { font-family: "STPSans"; font-weight: 900; src: url(data:font/ttf;base64,${toBase64("DejaVuSans-Bold.ttf")}); }
-    @font-face { font-family: "STPMono"; font-weight: 700; src: url(data:font/ttf;base64,${toBase64("DejaVuSansMono.ttf")}); }
-  </style></defs>`;
-  return fontDefsCache;
-}
+// DejaVu Sans/Sans Mono: public domain-derived (Bitstream Vera + public domain additions), fully
+// redistributable, excellent Unicode coverage (confirmed: →, ·, × all render). Discovered by
+// fontconfig via the generated fonts.conf above -- see the big comment near the top of this file
+// for why that replaced embedding the font bytes directly in the SVG.
 
 // Fills scripts/movers-short.template.html with a { winner, loser } pair (each needs
 // .symbol/.pctChange/.price/.intraday.{times,closes} -- exactly what findMover() returns) and
@@ -273,7 +268,7 @@ function chartFrame(x, y, w, h, min, max) {
   }).join("");
 
   return (
-    `<text x="${x}" y="${(y - 8).toFixed(1)}" font-family="STPSans" font-size="17" font-weight="700" fill="${COLORS.textMuted}">RANGE ${escapeXml(formatMoney(min))} - ${escapeXml(formatMoney(max))}</text>` +
+    `<text x="${x}" y="${(y - 8).toFixed(1)}" font-family="DejaVu Sans" font-size="17" font-weight="700" fill="${COLORS.textMuted}">RANGE ${escapeXml(formatMoney(min))} - ${escapeXml(formatMoney(max))}</text>` +
     `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.10)" stroke-width="1.5" rx="10"/>` +
     gridLines
   );
@@ -290,7 +285,7 @@ function entryMarkerSvg(entryX, entryY) {
   return (
     `<circle cx="${entryX.toFixed(1)}" cy="${entryY.toFixed(1)}" r="13" fill="none" stroke="${color}" stroke-width="3"/>` +
     `<circle cx="${entryX.toFixed(1)}" cy="${entryY.toFixed(1)}" r="4" fill="${color}"/>` +
-    `<text x="${entryX.toFixed(1)}" y="${(entryY - 20).toFixed(1)}" font-family="STPSans" font-size="17" font-weight="800" letter-spacing="0.5" fill="${color}" text-anchor="middle">BUY</text>`
+    `<text x="${entryX.toFixed(1)}" y="${(entryY - 20).toFixed(1)}" font-family="DejaVu Sans" font-size="17" font-weight="800" letter-spacing="0.5" fill="${color}" text-anchor="middle">BUY</text>`
   );
 }
 
@@ -325,16 +320,16 @@ function cardSvg({ x, y, w, h, accent, accentFill, tagLabel, ticker, pctChange, 
   return `
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="26" fill="${COLORS.card}" stroke="${accent}" stroke-opacity="0.45" stroke-width="2.5"/>
     <rect x="${x + pad}" y="${y + 30}" width="150" height="44" rx="10" fill="${accentFill}"/>
-    <text x="${x + pad + 18}" y="${y + 60}" font-family="STPSans" font-size="23" font-weight="800" letter-spacing="1.5" fill="${accent}">${escapeXml(tagLabel.toUpperCase())}</text>
+    <text x="${x + pad + 18}" y="${y + 60}" font-family="DejaVu Sans" font-size="23" font-weight="800" letter-spacing="1.5" fill="${accent}">${escapeXml(tagLabel.toUpperCase())}</text>
     ${surgeText ? `
     <rect x="${x + w - pad - surgeWidth}" y="${y + 30}" width="${surgeWidth}" height="44" rx="10" fill="rgba(88,101,242,0.18)"/>
-    <text x="${x + w - pad - surgeWidth / 2}" y="${y + 60}" font-family="STPSans" font-size="21" font-weight="800" letter-spacing="0.5" fill="${COLORS.cta}" text-anchor="middle">${escapeXml(surgeText)}</text>
+    <text x="${x + w - pad - surgeWidth / 2}" y="${y + 60}" font-family="DejaVu Sans" font-size="21" font-weight="800" letter-spacing="0.5" fill="${COLORS.cta}" text-anchor="middle">${escapeXml(surgeText)}</text>
     ` : ""}
-    <text x="${x + pad}" y="${y + 140}" font-family="STPMono" font-size="52" font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(ticker)}</text>
-    <text x="${x + pad}" y="${y + 235}" font-family="STPSans" font-size="92" font-weight="900" fill="${accent}">${pctText}</text>
-    <text x="${x + pad}" y="${y + 278}" font-family="STPSans" font-size="29" fill="${COLORS.textSecondary}">${escapeXml(entryLabel)} <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(openPrice)}</tspan> → Now <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(nowPrice)}</tspan></text>
+    <text x="${x + pad}" y="${y + 140}" font-family="DejaVu Sans Mono" font-size="52" font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(ticker)}</text>
+    <text x="${x + pad}" y="${y + 235}" font-family="DejaVu Sans" font-size="92" font-weight="900" fill="${accent}">${pctText}</text>
+    <text x="${x + pad}" y="${y + 278}" font-family="DejaVu Sans" font-size="29" fill="${COLORS.textSecondary}">${escapeXml(entryLabel)} <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(openPrice)}</tspan> → Now <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(nowPrice)}</tspan></text>
     ${frame.draw}
-    <text x="${x + pad}" y="${y + h - 24}" font-family="STPSans" font-size="23" font-weight="700" letter-spacing="1" fill="${COLORS.textMuted}">${escapeXml(timeframe.toUpperCase())}</text>
+    <text x="${x + pad}" y="${y + h - 24}" font-family="DejaVu Sans" font-size="23" font-weight="700" letter-spacing="1" fill="${COLORS.textMuted}">${escapeXml(timeframe.toUpperCase())}</text>
   `;
 }
 
@@ -362,19 +357,18 @@ async function generateShortImage(winner, loser) {
   const loserY = winnerY + cardH + cardGap;
 
   const svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
-  ${fontDefs()}
   <rect width="${W}" height="${H}" fill="${COLORS.surface}"/>
   <rect x="8" y="8" width="${W - 16}" height="${H - 16}" rx="36" fill="none" stroke="${COLORS.winner}" stroke-width="6" stroke-opacity="0.55"/>
 
   <clipPath id="logoClip"><rect x="70" y="80" width="64" height="64" rx="16"/></clipPath>
   <image href="${logoSrc}" x="70" y="80" width="64" height="64" clip-path="url(#logoClip)"/>
-  <text x="150" y="122" font-family="STPSans" font-size="29" font-weight="700" letter-spacing="2" fill="${COLORS.textSecondary}">STP · TODAY'S MOVERS</text>
+  <text x="150" y="122" font-family="DejaVu Sans" font-size="29" font-weight="700" letter-spacing="2" fill="${COLORS.textSecondary}">STP · TODAY'S MOVERS</text>
 
-  <text x="70" y="212" font-family="STPSans" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">Today's biggest</text>
-  <text x="70" y="280" font-family="STPSans" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">winner &amp; loser.</text>
+  <text x="70" y="212" font-family="DejaVu Sans" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">Today's biggest</text>
+  <text x="70" y="280" font-family="DejaVu Sans" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">winner &amp; loser.</text>
 
   <circle cx="80" cy="325" r="9" fill="${COLORS.cta}"/>
-  <text x="100" y="334" font-family="STPSans" font-size="29" font-weight="600" fill="${COLORS.textSecondary}">Live off today's session</text>
+  <text x="100" y="334" font-family="DejaVu Sans" font-size="29" font-weight="600" fill="${COLORS.textSecondary}">Live off today's session</text>
 
   ${cardSvg({
     x: cardX, y: winnerY, w: cardW, h: cardH, accent: COLORS.winner, accentFill: COLORS.winnerFill,
@@ -391,11 +385,11 @@ async function generateShortImage(winner, loser) {
   })}
 
   <rect x="${W / 2 - 230}" y="1560" width="460" height="90" rx="45" fill="${COLORS.cta}"/>
-  <text x="${W / 2}" y="1616" font-family="STPSans" font-size="35" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
+  <text x="${W / 2}" y="1616" font-family="DejaVu Sans" font-size="35" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
 
-  <text x="${W / 2}" y="1710" font-family="STPSans" font-size="25" font-weight="700" fill="${COLORS.textSecondary}" text-anchor="middle">${escapeXml(metaLine)}</text>
-  <text x="${W / 2}" y="1755" font-family="STPSans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Technical pattern data, not financial advice.</text>
-  <text x="${W / 2}" y="1785" font-family="STPSans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
+  <text x="${W / 2}" y="1710" font-family="DejaVu Sans" font-size="25" font-weight="700" fill="${COLORS.textSecondary}" text-anchor="middle">${escapeXml(metaLine)}</text>
+  <text x="${W / 2}" y="1755" font-family="DejaVu Sans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Technical pattern data, not financial advice.</text>
+  <text x="${W / 2}" y="1785" font-family="DejaVu Sans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
 </svg>`;
 
   return sharp(Buffer.from(svg)).png().toBuffer();
@@ -431,19 +425,18 @@ async function generateHighlightImage(highlight) {
   const cardY = 440;
 
   const svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
-  ${fontDefs()}
   <rect width="${W}" height="${H}" fill="${COLORS.surface}"/>
   <rect x="8" y="8" width="${W - 16}" height="${H - 16}" rx="36" fill="none" stroke="${COLORS.winner}" stroke-width="6" stroke-opacity="0.55"/>
 
   <clipPath id="logoClip"><rect x="70" y="80" width="64" height="64" rx="16"/></clipPath>
   <image href="${logoSrc}" x="70" y="80" width="64" height="64" clip-path="url(#logoClip)"/>
-  <text x="150" y="122" font-family="STPSans" font-size="29" font-weight="700" letter-spacing="2" fill="${COLORS.textSecondary}">STP · ${escapeXml(highlight.badgeText.toUpperCase())}</text>
+  <text x="150" y="122" font-family="DejaVu Sans" font-size="29" font-weight="700" letter-spacing="2" fill="${COLORS.textSecondary}">STP · ${escapeXml(highlight.badgeText.toUpperCase())}</text>
 
-  <text x="70" y="212" font-family="STPSans" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">${escapeXml(highlight.headlineLines[0])}</text>
-  <text x="70" y="280" font-family="STPSans" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">${escapeXml(highlight.headlineLines[1])}</text>
+  <text x="70" y="212" font-family="DejaVu Sans" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">${escapeXml(highlight.headlineLines[0])}</text>
+  <text x="70" y="280" font-family="DejaVu Sans" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">${escapeXml(highlight.headlineLines[1])}</text>
 
   <circle cx="80" cy="325" r="9" fill="${COLORS.cta}"/>
-  <text x="100" y="334" font-family="STPSans" font-size="29" font-weight="600" fill="${COLORS.textSecondary}">${escapeXml(highlight.captionText)}</text>
+  <text x="100" y="334" font-family="DejaVu Sans" font-size="29" font-weight="600" fill="${COLORS.textSecondary}">${escapeXml(highlight.captionText)}</text>
 
   ${cardSvg({
     x: cardX, y: cardY, w: cardW, h: cardH, accent: COLORS.winner, accentFill: COLORS.winnerFill,
@@ -455,11 +448,11 @@ async function generateHighlightImage(highlight) {
   })}
 
   <rect x="${W / 2 - 230}" y="1470" width="460" height="90" rx="45" fill="${COLORS.cta}"/>
-  <text x="${W / 2}" y="1526" font-family="STPSans" font-size="35" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
+  <text x="${W / 2}" y="1526" font-family="DejaVu Sans" font-size="35" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
 
-  <text x="${W / 2}" y="1620" font-family="STPSans" font-size="25" font-weight="700" fill="${COLORS.textSecondary}" text-anchor="middle">${escapeXml(highlight.metaLine)}</text>
-  <text x="${W / 2}" y="1665" font-family="STPSans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Technical pattern data, not financial advice.</text>
-  <text x="${W / 2}" y="1695" font-family="STPSans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
+  <text x="${W / 2}" y="1620" font-family="DejaVu Sans" font-size="25" font-weight="700" fill="${COLORS.textSecondary}" text-anchor="middle">${escapeXml(highlight.metaLine)}</text>
+  <text x="${W / 2}" y="1665" font-family="DejaVu Sans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Technical pattern data, not financial advice.</text>
+  <text x="${W / 2}" y="1695" font-family="DejaVu Sans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
 </svg>`;
 
   return sharp(Buffer.from(svg)).png().toBuffer();
