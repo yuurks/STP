@@ -444,7 +444,12 @@ async function generateHighlightImage(highlight) {
     openPrice: formatMoney(highlight.openPrice), nowPrice: formatMoney(highlight.nowPrice),
     closes: highlight.closes, ohlc: highlight.ohlc, timeframe: highlight.timeframeLabel, volumeSurgeRatio: highlight.volumeSurgeRatio,
     chartH: 480, entryLabel: highlight.entryLabel,
-    entryIndex: highlight.entryIndex, entryPriceRaw: highlight.openPrice, showEntryMarker: true
+    entryIndex: highlight.entryIndex, entryPriceRaw: highlight.openPrice,
+    // Real Call cards mark a genuine logged alert (real price, real timestamp -- see bestCall.js).
+    // Live Mover cards have no alert behind them at all: closes[0] is just the start of today's
+    // displayed window, not anything the bot ever called. Showing a "BUY" circle there would
+    // visually claim a signal that never happened, so it's Real-Call-only.
+    showEntryMarker: highlight.badgeText === "Real Call"
   })}
 
   <rect x="${W / 2 - 230}" y="1470" width="460" height="90" rx="45" fill="${COLORS.cta}"/>
