@@ -1,5 +1,8 @@
 require("dotenv").config();
-const { Client, GatewayIntentBits, Events, AttachmentBuilder, PermissionFlagsBits } = require("discord.js");
+const {
+  Client, GatewayIntentBits, Events, AttachmentBuilder, PermissionFlagsBits,
+  ButtonBuilder, ButtonStyle, ActionRowBuilder
+} = require("discord.js");
 
 const {
   analyze, backtest, dailyReturns, selectDiversified
@@ -296,7 +299,17 @@ async function runShortsDrop(guildId, channel) {
   const png = await shorts.generateHighlightImage(highlight);
   const filename = "stp-short.png";
   const file = new AttachmentBuilder(png, { name: filename });
-  await channel.send({ embeds: [highlightEmbed(highlight, filename)], files: [file] });
+  // The image itself has a "Join the Discord ->" graphic baked into the pixels -- purely
+  // decorative on its own, since a picture can't be clicked. This button is what actually makes
+  // that call-to-action functional on the Discord post itself (a video's pixels, unlike a Discord
+  // message, can never be clickable -- YouTube's real equivalent is the link already included in
+  // buildYoutubeCaption's description text).
+  const joinDiscordButton = new ButtonBuilder()
+    .setLabel("Join the Discord")
+    .setStyle(ButtonStyle.Link)
+    .setURL(shorts.DISCORD_INVITE_URL);
+  const row = new ActionRowBuilder().addComponents(joinDiscordButton);
+  await channel.send({ embeds: [highlightEmbed(highlight, filename)], files: [file], components: [row] });
 
   // Additive only -- the image above is the real /shorts post and always goes out regardless of
   // what happens here. This just also hands over a ready-to-upload vertical MP4 (ffmpeg turning

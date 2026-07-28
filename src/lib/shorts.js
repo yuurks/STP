@@ -506,9 +506,9 @@ function buildFallbackHighlight(winner) {
 
 // Title/description text ready to paste straight into YouTube Studio's upload form -- built from
 // the exact same highlight object the image/video came from, so it can never disagree with what's
-// actually on screen. DISCORD_INVITE_URL is optional (falls back to a placeholder that's obviously
-// a placeholder, not a real broken link) so this never silently ships a fake URL.
-const DISCORD_INVITE_URL = process.env.DISCORD_INVITE_URL || "[add your Discord invite link here]";
+// actually on screen. DISCORD_INVITE_URL can be overridden via env var (e.g. if the invite ever
+// needs to rotate) but defaults to the server's real, currently-active invite.
+const DISCORD_INVITE_URL = process.env.DISCORD_INVITE_URL || "https://discord.gg/rD3VH8XNj";
 
 function buildYoutubeCaption(highlight) {
   const sign = highlight.pctChange >= 0 ? "+" : "";
@@ -532,5 +532,5 @@ function buildYoutubeCaption(highlight) {
 
 module.exports = {
   findMover, generateShortHtml, generateShortImage, generateHighlightImage,
-  buildCallHighlight, buildFallbackHighlight, buildYoutubeCaption
+  buildCallHighlight, buildFallbackHighlight, buildYoutubeCaption, DISCORD_INVITE_URL
 };
