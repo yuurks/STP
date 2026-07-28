@@ -596,7 +596,12 @@ client.once(Events.ClientReady, c => {
     // volume naturally scales with however many real winners are actually happening rather than
     // being capped at exactly two posts a day regardless of how much (or how little) qualifies.
     for (const [guildId, guildData] of watchlist.allGuildsWithShortsSchedule()) {
-      const { channelId, intervalMinutes, lastRun } = guildData.shortsSchedule;
+      const { channelId, lastRun } = guildData.shortsSchedule;
+      // Falls back to 60 for any schedule saved before this option existed (the old fixed-time
+      // format had no intervalMinutes at all) -- without this, an old config's undefined
+      // intervalMinutes makes the due-check compute NaN forever, silently freezing that guild's
+      // Shorts drops until someone re-runs /shorts on to resave the config.
+      const intervalMinutes = guildData.shortsSchedule.intervalMinutes || 60;
       const due = !lastRun || now - lastRun >= intervalMinutes * 60 * 1000;
       if (!due) continue;
 
