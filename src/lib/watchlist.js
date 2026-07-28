@@ -441,6 +441,28 @@ function markShortRun(guildId, slot, dateStr) {
   saveAll(all);
 }
 
+// findBestCall always ranks every eligible winner and features the single best one -- without
+// this, whichever coin has the strongest all-time gain in this server's alert history would keep
+// winning that slot on every single drop, forever, even once other real winners exist. Recording
+// the last few featured symbols here lets bestCall.js skip repeats and rotate through different
+// real calls instead, falling back to a repeat only when nothing else currently qualifies. Kept
+// short on purpose -- this only needs to cover a handful of recent drops, not a long-term record.
+const SHORTS_FEATURED_HISTORY_LIMIT = 3;
+
+function getRecentShortsFeatured(guildId) {
+  const all = loadAll();
+  return all[guildId]?.shortsFeaturedHistory || [];
+}
+
+function recordShortsFeatured(guildId, symbol) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  const history = guild.shortsFeaturedHistory || [];
+  history.unshift({ symbol, timestamp: Date.now() });
+  guild.shortsFeaturedHistory = history.slice(0, SHORTS_FEATURED_HISTORY_LIMIT);
+  saveAll(all);
+}
+
 // /ytwatch config: channelId (the resolved YouTube channel), discordChannelId (where to post),
 // intervalMinutes, lastRun, and lastVideoId (the most recent video ID already seen/announced --
 // seeded at setup time so turning this on never retroactively announces a channel's existing
@@ -504,6 +526,7 @@ module.exports = {
   logAlert, getAlertHistory,
   setAlertDigestSchedule, markAlertDigestRun, allGuildsWithAlertDigestSchedule,
   setShortsSchedule, allGuildsWithShortsSchedule, markShortRun,
+  getRecentShortsFeatured, recordShortsFeatured,
   setYoutubeWatch, markYoutubeWatchRun, allGuildsWithYoutubeWatch,
   getDiscoverVerdicts, saveDiscoverVerdicts, logDiscoverAlert, getDiscoverAlertHistory,
   setDiscoverSchedule, markDiscoverRun, allGuildsWithDiscoverSchedule,

@@ -160,9 +160,21 @@ async function tryFetchRealOhlc(entry, currentPrice, livePairAddress) {
   }
 }
 
+// Ranks a list of winner candidates and picks the strongest one, but skips any symbol in
+// recentSymbols (the last few /shorts drops -- see watchlist.js's shortsFeaturedHistory) when a
+// non-repeat option exists, so the same coin doesn't dominate every drop just for having the
+// strongest all-time gain. Falls back to the best repeat anyway when every candidate is recent --
+// showing the same real winner again beats showing nothing.
+function pickBestWithRotation(candidates, recentSymbols) {
+  if (!candidates.length) return null;
+  const fresh = candidates.filter(c => !recentSymbols.has(c.symbol));
+  const pool = fresh.length ? fresh : candidates;
+  return pool.reduce((best, c) => (!best || c.pctChange > best.pctChange ? c : best), null);
+}
+
 // /alerts and /discover both fire off daily-candle signals against the same evaluation rules --
 // only the history bucket and the label shown differ.
-async function bestFromCandleSource(guildId, source, getHistory) {
+async function bestFromCandleSource(guildId, source, getHistory, recentSymbols) {
   const history = getHistory(guildId);
   const eligible = history.filter(h => Date.now() - h.timestamp >= ALERT_EVAL_MIN_AGE_MS);
   if (!eligible.length) return null;
@@ -178,29 +190,27 @@ async function bestFromCandleSource(guildId, source, getHistory) {
     }
   }
 
-  let best = null;
+  const candidates = [];
   for (const entry of eligible) {
     const rows = seriesBySymbol[entry.symbol];
     if (!rows) continue;
     const result = evaluateStopAware(entry, rows);
     if (!result) continue;
-    if (!best || result.pctChange > best.pctChange) {
-      best = {
-        source, symbol: entry.symbol, verdict: entry.verdict,
-        entryPrice: entry.price, currentPrice: result.currentPrice,
-        pctChange: result.pctChange, firedAt: entry.timestamp,
-        closes: result.closes, ohlc: result.ohlc, entryIndex: result.entryIndex
-      };
-    }
+    candidates.push({
+      source, symbol: entry.symbol, verdict: entry.verdict,
+      entryPrice: entry.price, currentPrice: result.currentPrice,
+      pctChange: result.pctChange, firedAt: entry.timestamp,
+      closes: result.closes, ohlc: result.ohlc, entryIndex: result.entryIndex
+    });
   }
-  return best;
+  return pickBestWithRotation(candidates, recentSymbols);
 }
 
 // /degen and /breakout have no historical candles from DexScreener itself (see dexscreener.js)
 // -- the winning pick, if any, gets a real-candle enrichment attempt from GeckoTerminal below;
 // this part is just the raw current-price-vs-logged-price comparison used to find the winner,
 // same as their own /x history commands.
-async function bestFromDexScreenerSource(guildId, source, getHistory) {
+async function bestFromDexScreenerSource(guildId, source, getHistory, recentSymbols) {
   const history = getHistory(guildId);
   const eligible = history.filter(h => Date.now() - h.timestamp >= DEX_EVAL_MIN_AGE_MS);
   if (!eligible.length) return null;
@@ -221,24 +231,19 @@ async function bestFromDexScreenerSource(guildId, source, getHistory) {
     return null;
   }
 
-  let best = null;
-  let winningEntry = null;
-  let winningLivePairAddress = null;
+  const candidates = [];
   for (const entry of eligible) {
     const current = currentByAddress.get(entry.address);
     const currentPrice = current ? parseFloat(current.priceUsd) : NaN;
     if (!current || !currentPrice || !entry.price) continue;
     const pctChange = ((currentPrice - entry.price) / entry.price) * 100;
-    if (!best || pctChange > best.pctChange) {
-      best = {
-        source, symbol: entry.symbol, verdict: null,
-        entryPrice: entry.price, currentPrice,
-        pctChange, firedAt: entry.timestamp,
-        // Honest 2-point line (entry -> now) by default, not a fabricated trajectory --
-        // replaced below with real candles if GeckoTerminal has them for this pool.
-        closes: [entry.price, currentPrice], ohlc: null, entryIndex: 0
-      };
-      winningEntry = entry;
+    candidates.push({
+      source, symbol: entry.symbol, verdict: null,
+      entryPrice: entry.price, currentPrice,
+      pctChange, firedAt: entry.timestamp,
+      // Honest 2-point line (entry -> now) by default, not a fabricated trajectory --
+      // replaced below with real candles if GeckoTerminal has them for this pool.
+      closes: [entry.price, currentPrice], ohlc: null, entryIndex: 0,
       // `current.pairAddress` is DexScreener's *currently* highest-liquidity pool for this
       // token -- not necessarily the same pool `entry.pairAddress` pointed at when the alert
       // first logged (a token that started on a thin pump.fun bonding-curve pool and later
@@ -246,9 +251,17 @@ async function bestFromDexScreenerSource(guildId, source, getHistory) {
       // Fetching candles from the SAME pool `currentPrice` itself came from means the two can
       // never disagree, and a live, high-liquidity pool is far more likely to actually have
       // OHLC history on GeckoTerminal than a stale, possibly near-zero-liquidity original one.
-      winningLivePairAddress = current.pairAddress;
-    }
+      // Both underscore-prefixed fields are internal-only, stripped off before returning below.
+      _entry: entry, _livePairAddress: current.pairAddress
+    });
   }
+
+  const best = pickBestWithRotation(candidates, recentSymbols);
+  if (!best) return null;
+  const winningEntry = best._entry;
+  const winningLivePairAddress = best._livePairAddress;
+  delete best._entry;
+  delete best._livePairAddress;
 
   // Only the single winning pick ever gets a real-candle lookup -- never spent on every
   // eligible candidate, so this stays cheap regardless of how much history exists.
@@ -267,16 +280,21 @@ async function bestFromDexScreenerSource(guildId, source, getHistory) {
 // eligible is a genuine winner yet (either no history old enough, or everything eligible is
 // currently flat/negative -- a loser is never returned here, by design).
 async function findBestCall(guildId) {
+  const recentSymbols = new Set(watchlist.getRecentShortsFeatured(guildId).map(h => h.symbol));
+
   const results = await Promise.all([
-    bestFromCandleSource(guildId, "Alerts", watchlist.getAlertHistory),
-    bestFromCandleSource(guildId, "Discover", watchlist.getDiscoverAlertHistory),
-    bestFromDexScreenerSource(guildId, "Degen", watchlist.getDegenAlertHistory),
-    bestFromDexScreenerSource(guildId, "Breakout", watchlist.getBreakoutAlertHistory)
+    bestFromCandleSource(guildId, "Alerts", watchlist.getAlertHistory, recentSymbols),
+    bestFromCandleSource(guildId, "Discover", watchlist.getDiscoverAlertHistory, recentSymbols),
+    bestFromDexScreenerSource(guildId, "Degen", watchlist.getDegenAlertHistory, recentSymbols),
+    bestFromDexScreenerSource(guildId, "Breakout", watchlist.getBreakoutAlertHistory, recentSymbols)
   ]);
 
   const winners = results.filter(r => r && r.pctChange > 0);
-  if (!winners.length) return null;
-  return winners.reduce((best, r) => (r.pctChange > best.pctChange ? r : best));
+  // Each per-source result is already rotation-aware on its own, but a source can still come back
+  // with a forced repeat if that source alone had no fresh alternative (e.g. Degen's only winner
+  // ever is the one just featured) -- re-applying rotation across all four combined still prefers
+  // any fresh pick from another source over that forced repeat, even one with a smaller gain.
+  return pickBestWithRotation(winners, recentSymbols);
 }
 
 module.exports = { findBestCall };

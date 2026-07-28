@@ -279,6 +279,11 @@ async function runShortsDrop(guildId, channel) {
   const best = await findBestCall(guildId);
   if (best) {
     highlight = shorts.buildCallHighlight(best);
+    // findBestCall already skips recently-featured symbols when a fresh winner exists (see
+    // bestCall.js's pickBestWithRotation) -- recording this pick is what makes that possible on
+    // the *next* run. The live-mover fallback below never gets recorded here since it's a fresh
+    // scan every time already, not ranked history that would otherwise repeat.
+    watchlist.recordShortsFeatured(guildId, best.symbol);
   } else {
     const { winner } = await shorts.findMover(SHORTS_UNIVERSE, SHORTS_SAMPLE_SIZE);
     if (!winner) {
