@@ -115,37 +115,37 @@ function resampleOhlc(candles, entryIndex) {
 // won't have one and gracefully keep the 2-point line instead). Never thrown on failure -- a
 // missing/delisted/too-new pool just means no enrichment, not a broken /shorts run.
 //
-// currentPrice is the price bestFromDexScreenerSource already confirmed via a fresh DexScreener
-// lookup, keyed by the token's mint address -- which finds whatever pool DexScreener currently
-// considers canonical for that token (highest liquidity), not necessarily the same pool
-// pairAddress points at. A pump.fun token migrating from its bonding curve to a real AMM pool
-// between when the alert fired and when this runs is exactly the case where those two addresses
-// diverge: pairAddress is frozen at whatever it was at log time, DexScreener's current lookup
-// naturally follows the token to its new pool. Fetching OHLC from the stale pool and showing it
-// next to a "Now $X" price that pool never actually reached would be a real, visible
-// inconsistency -- if the fetched pool's own latest close doesn't roughly agree with the
-// independently-confirmed current price, treat it as the wrong pool and skip enrichment rather
-// than show a chart that silently disagrees with the text above it.
+// livePairAddress is the pool bestFromDexScreenerSource's currentPrice actually came from --
+// whatever pool DexScreener currently considers canonical for this token (highest liquidity) --
+// which is preferred over entry.pairAddress (frozen at whatever pool existed when the alert first
+// logged) whenever it's available. A pump.fun token commonly starts on a near-zero-liquidity
+// bonding-curve pool that GeckoTerminal has no real candle history for at all, then migrates to a
+// real AMM pool with actual trading volume soon after -- querying the live pool instead fixes
+// that directly, and as a bonus the two prices can no longer diverge since they're now the same
+// pool. entry.pairAddress remains the fallback for the rare case DexScreener's lookup didn't
+// return a pairAddress. The divergence check below stays anyway as a last-resort safety net (e.g.
+// GeckoTerminal's own data lagging real-time), just no longer the primary defense.
 const MAX_PRICE_DIVERGENCE_RATIO = 0.5;
-async function tryFetchRealOhlc(entry, currentPrice) {
-  if (!entry.pairAddress) return null;
+async function tryFetchRealOhlc(entry, currentPrice, livePairAddress) {
+  const pairAddress = livePairAddress || entry.pairAddress;
+  if (!pairAddress) return null;
   try {
-    const candles = await fetchOhlcv(entry.pairAddress, pickGranularity(Date.now() - entry.timestamp));
+    const candles = await fetchOhlcv(pairAddress, pickGranularity(Date.now() - entry.timestamp));
     if (candles.length < 2) {
-      console.error(`Best-call GeckoTerminal data for ${entry.symbol} (${entry.pairAddress}) returned too few candles (${candles.length}) -- likely a too-thin/unindexed pool, skipping enrichment`);
+      console.error(`Best-call GeckoTerminal data for ${entry.symbol} (${pairAddress}) returned too few candles (${candles.length}) -- likely a too-thin/unindexed pool, skipping enrichment`);
       return null;
     }
     // If even the OLDEST fetched candle is already newer than the entry, the entry genuinely
     // isn't visible in this window -- that's a real "not enough history" case, not "it's at the
     // start," and showing a marker on the wrong candle would be worse than showing none.
     if (candles[0].time > entry.timestamp) {
-      console.error(`Best-call GeckoTerminal data for ${entry.symbol} (${entry.pairAddress}) starts after the entry's own timestamp -- not enough history at this granularity, skipping enrichment`);
+      console.error(`Best-call GeckoTerminal data for ${entry.symbol} (${pairAddress}) starts after the entry's own timestamp -- not enough history at this granularity, skipping enrichment`);
       return null;
     }
 
     const lastClose = candles[candles.length - 1].close;
     if (currentPrice > 0 && Math.abs(lastClose - currentPrice) / currentPrice > MAX_PRICE_DIVERGENCE_RATIO) {
-      console.error(`Best-call GeckoTerminal data for ${entry.symbol} (${entry.pairAddress}) disagrees with confirmed current price (pool close ${lastClose} vs ${currentPrice}) -- likely a stale pairAddress from before a migration, skipping enrichment`);
+      console.error(`Best-call GeckoTerminal data for ${entry.symbol} (${pairAddress}) disagrees with confirmed current price (pool close ${lastClose} vs ${currentPrice}) -- likely a stale pairAddress from before a migration, skipping enrichment`);
       return null;
     }
 
@@ -155,7 +155,7 @@ async function tryFetchRealOhlc(entry, currentPrice) {
     );
     return { ohlc: resampled, entryIndex };
   } catch (err) {
-    console.error(`Best-call GeckoTerminal lookup failed for ${entry.symbol} (${entry.pairAddress}): ${err.message}`);
+    console.error(`Best-call GeckoTerminal lookup failed for ${entry.symbol} (${pairAddress}): ${err.message}`);
     return null;
   }
 }
@@ -223,6 +223,7 @@ async function bestFromDexScreenerSource(guildId, source, getHistory) {
 
   let best = null;
   let winningEntry = null;
+  let winningLivePairAddress = null;
   for (const entry of eligible) {
     const current = currentByAddress.get(entry.address);
     const currentPrice = current ? parseFloat(current.priceUsd) : NaN;
@@ -238,13 +239,21 @@ async function bestFromDexScreenerSource(guildId, source, getHistory) {
         closes: [entry.price, currentPrice], ohlc: null, entryIndex: 0
       };
       winningEntry = entry;
+      // `current.pairAddress` is DexScreener's *currently* highest-liquidity pool for this
+      // token -- not necessarily the same pool `entry.pairAddress` pointed at when the alert
+      // first logged (a token that started on a thin pump.fun bonding-curve pool and later
+      // migrated to a real AMM will have a totally different, far more liquid pool by now).
+      // Fetching candles from the SAME pool `currentPrice` itself came from means the two can
+      // never disagree, and a live, high-liquidity pool is far more likely to actually have
+      // OHLC history on GeckoTerminal than a stale, possibly near-zero-liquidity original one.
+      winningLivePairAddress = current.pairAddress;
     }
   }
 
   // Only the single winning pick ever gets a real-candle lookup -- never spent on every
   // eligible candidate, so this stays cheap regardless of how much history exists.
   if (best && winningEntry) {
-    const enriched = await tryFetchRealOhlc(winningEntry, best.currentPrice);
+    const enriched = await tryFetchRealOhlc(winningEntry, best.currentPrice, winningLivePairAddress);
     if (enriched) {
       best.ohlc = enriched.ohlc;
       best.entryIndex = enriched.entryIndex;
