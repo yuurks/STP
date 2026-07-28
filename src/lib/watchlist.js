@@ -416,9 +416,9 @@ function allGuildsWithAlertDigestSchedule() {
   return Object.entries(all).filter(([, g]) => g.alertDigestSchedule);
 }
 
-// Recurring config for /shorts on -- two fixed daily crypto drops (4pm and 8pm ET; see
-// src/index.js) rather than a configurable interval, since the times aren't something worth
-// exposing as an option.
+// Recurring config for /shorts on -- event-driven, not a fixed daily time: src/index.js checks
+// every intervalMinutes for a NEW real winning call (findBestCall's isFresh flag) and only posts
+// when one actually exists, so this is really "how often to check," not "how often to post."
 function setShortsSchedule(guildId, config) {
   const all = loadAll();
   const guild = ensureGuild(all, guildId);
@@ -432,12 +432,11 @@ function allGuildsWithShortsSchedule() {
   return Object.entries(all).filter(([, g]) => g.shortsSchedule);
 }
 
-// slot: "1" (4pm) | "2" (8pm) -- tracked separately since they fire at different times of day.
-function markShortRun(guildId, slot, dateStr) {
+function markShortRun(guildId, timestamp) {
   const all = loadAll();
   const guild = ensureGuild(all, guildId);
   if (!guild.shortsSchedule) return;
-  guild.shortsSchedule[slot === "2" ? "lastRunDate2" : "lastRunDate1"] = dateStr;
+  guild.shortsSchedule.lastRun = timestamp;
   saveAll(all);
 }
 

@@ -294,7 +294,13 @@ async function findBestCall(guildId) {
   // with a forced repeat if that source alone had no fresh alternative (e.g. Degen's only winner
   // ever is the one just featured) -- re-applying rotation across all four combined still prefers
   // any fresh pick from another source over that forced repeat, even one with a smaller gain.
-  return pickBestWithRotation(winners, recentSymbols);
+  const best = pickBestWithRotation(winners, recentSymbols);
+  // isFresh tells a caller whether this is a genuinely new pick versus a forced repeat (nothing
+  // else currently qualifies) -- /shorts's event-driven auto-post only fires on isFresh results,
+  // so the same real winner doesn't get posted again just because a scheduled check happened to
+  // run and it's still technically "the best." Manual /shorts now ignores this and always posts.
+  if (best) best.isFresh = !recentSymbols.has(best.symbol);
+  return best;
 }
 
 module.exports = { findBestCall };

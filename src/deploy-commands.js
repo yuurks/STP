@@ -84,13 +84,14 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("shorts")
-    .setDescription("Automatic daily YouTube Shorts assets: this server's best real call, or today's biggest mover")
+    .setDescription("Automatic YouTube Shorts assets: posts the moment a new real winning call qualifies")
     .setDefaultMemberPermissions(MANAGE_GUILD_ONLY)
     .addSubcommand(sc =>
-      sc.setName("on").setDescription("Turn on the daily Shorts drop (4pm and 8pm ET)")
-        .addChannelOption(o => o.setName("channel").setDescription("Channel to post both daily drops in").setRequired(true))
+      sc.setName("on").setDescription("Turn on event-driven Shorts drops")
+        .addChannelOption(o => o.setName("channel").setDescription("Channel to post drops in").setRequired(true))
+        .addIntegerOption(o => o.setName("interval_minutes").setDescription("How often to check for a new real winner, in minutes, min 15 (default 60)").setRequired(false))
     )
-    .addSubcommand(sc => sc.setName("off").setDescription("Turn off the daily Shorts drop"))
+    .addSubcommand(sc => sc.setName("off").setDescription("Turn off Shorts drops"))
     .addSubcommand(sc => sc.setName("now").setDescription("Run a Shorts scan right now instead of waiting for the schedule")),
 
   new SlashCommandBuilder()

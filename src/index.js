@@ -259,43 +259,11 @@ const SHORTS_SAMPLE_SIZE = 100;
 // and shorts.js's volume-surge filter for how "small cap, real volume interest" is approximated.
 const SHORTS_UNIVERSE = "crypto-smallcap";
 
-// America/New_York wall-clock time, used to fire the Shorts drop at a fixed local time
-// (4:00pm/8:00pm ET) regardless of where the server hosting the bot actually runs.
-function nowInEastern() {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York", hour12: false,
-    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
-  }).formatToParts(new Date());
-  const get = type => parts.find(p => p.type === type).value;
-  return { date: `${get("year")}-${get("month")}-${get("day")}`, hhmm: `${get("hour")}:${get("minute")}` };
-}
-
-// Prefers a real past call (see bestCall.js -- the single best-performing eligible entry across
-// /alerts, /discover, /degen, and /breakout history for this guild) over a live market scan,
-// since "this actually happened" is a stronger, more honest piece of content than "here's
-// today's biggest random mover." Falls back to a live scan only when nothing eligible has won
-// yet -- winner-only even then, no loser side exists in this format at all. Renders the finished
-// visual as a PNG and posts it to the given channel as an embedded image (not a file you have to
-// download and open) alongside the stats embed.
-async function runShortsDrop(guildId, channel) {
-  let highlight;
-  const best = await findBestCall(guildId);
-  if (best) {
-    highlight = shorts.buildCallHighlight(best);
-    // findBestCall already skips recently-featured symbols when a fresh winner exists (see
-    // bestCall.js's pickBestWithRotation) -- recording this pick is what makes that possible on
-    // the *next* run. The live-mover fallback below never gets recorded here since it's a fresh
-    // scan every time already, not ranked history that would otherwise repeat.
-    watchlist.recordShortsFeatured(guildId, best.symbol);
-  } else {
-    const { winner } = await shorts.findMover(SHORTS_UNIVERSE, SHORTS_SAMPLE_SIZE);
-    if (!winner) {
-      await channel.send("Shorts scan finished, but didn't find usable data -- skipped.");
-      return;
-    }
-    highlight = shorts.buildFallbackHighlight(winner);
-  }
-
+// Shared by both /shorts entry points below -- renders the finished visual as a PNG and posts it
+// to the given channel as an embedded image (not a file you have to download and open) alongside
+// the stats embed and a real "Join the Discord" link button, then attempts the additive MP4 +
+// YouTube caption follow-up (never allowed to fail the actual post above if it errors).
+async function postShortsHighlight(highlight, channel) {
   const png = await shorts.generateHighlightImage(highlight);
   const filename = "stp-short.png";
   const file = new AttachmentBuilder(png, { name: filename });
@@ -328,6 +296,42 @@ async function runShortsDrop(guildId, channel) {
   } catch (err) {
     console.error(`Shorts video generation failed: ${err.message}`);
   }
+}
+
+// Manual /shorts now -- always posts something, since a human explicitly asked for it right now.
+// Prefers a real past call (see bestCall.js -- the single best-performing eligible entry across
+// /alerts, /discover, /degen, and /breakout history for this guild) over a live market scan,
+// since "this actually happened" is a stronger, more honest piece of content than "here's
+// today's biggest random mover." Falls back to a live scan only when nothing eligible has won yet
+// -- winner-only even then, no loser side exists in this format at all.
+async function runShortsDrop(guildId, channel) {
+  let highlight;
+  const best = await findBestCall(guildId);
+  if (best) {
+    highlight = shorts.buildCallHighlight(best);
+    watchlist.recordShortsFeatured(guildId, best.symbol);
+  } else {
+    const { winner } = await shorts.findMover(SHORTS_UNIVERSE, SHORTS_SAMPLE_SIZE);
+    if (!winner) {
+      await channel.send("Shorts scan finished, but didn't find usable data -- skipped.");
+      return;
+    }
+    highlight = shorts.buildFallbackHighlight(winner);
+  }
+  await postShortsHighlight(highlight, channel);
+}
+
+// Scheduled /shorts on check -- event-driven, not a fixed daily time. Only posts when
+// findBestCall finds a genuinely NEW real winner (isFresh), never the live-mover fallback and
+// never a forced repeat of something already featured recently -- so this silently does nothing
+// most checks, and only produces a post when there's actually real, fresh content worth sharing.
+async function runShortsAutoCheck(guildId, channel) {
+  const best = await findBestCall(guildId);
+  if (!best || !best.isFresh) return;
+
+  const highlight = shorts.buildCallHighlight(best);
+  watchlist.recordShortsFeatured(guildId, best.symbol);
+  await postShortsHighlight(highlight, channel);
 }
 
 // Checks a watched YouTube channel's public feed for something newer than the last video seen,
@@ -587,31 +591,21 @@ client.once(Events.ClientReady, c => {
       }
     }
 
-    // Two fixed daily drops (4:00pm and 8:00pm ET), both scanning small/mid-cap crypto -- rather
-    // than an interval. `date !== lastRunDate` guards against firing more than once during that
-    // minute's window and survives restarts since the date is persisted, not just held in memory.
-    const { date, hhmm } = nowInEastern();
+    // Event-driven, not a fixed daily time: checks every intervalMinutes for a NEW real winning
+    // call and only posts when findBestCall actually finds one (isFresh -- see bestCall.js), so
+    // volume naturally scales with however many real winners are actually happening rather than
+    // being capped at exactly two posts a day regardless of how much (or how little) qualifies.
     for (const [guildId, guildData] of watchlist.allGuildsWithShortsSchedule()) {
-      const { channelId, lastRunDate1, lastRunDate2 } = guildData.shortsSchedule;
+      const { channelId, intervalMinutes, lastRun } = guildData.shortsSchedule;
+      const due = !lastRun || now - lastRun >= intervalMinutes * 60 * 1000;
+      if (!due) continue;
 
-      if (hhmm === "16:00" && lastRunDate1 !== date) {
-        watchlist.markShortRun(guildId, "1", date);
-        try {
-          const channel = await client.channels.fetch(channelId);
-          await runShortsDrop(guildId, channel);
-        } catch (err) {
-          console.error(`Shorts drop (4pm) failed for guild ${guildId}: ${err.message}`);
-        }
-      }
-
-      if (hhmm === "20:00" && lastRunDate2 !== date) {
-        watchlist.markShortRun(guildId, "2", date);
-        try {
-          const channel = await client.channels.fetch(channelId);
-          await runShortsDrop(guildId, channel);
-        } catch (err) {
-          console.error(`Shorts drop (8pm) failed for guild ${guildId}: ${err.message}`);
-        }
+      watchlist.markShortRun(guildId, now);
+      try {
+        const channel = await client.channels.fetch(channelId);
+        await runShortsAutoCheck(guildId, channel);
+      } catch (err) {
+        console.error(`Shorts auto-check failed for guild ${guildId}: ${err.message}`);
       }
     }
 
@@ -916,15 +910,15 @@ client.on(Events.InteractionCreate, async interaction => {
         const sub = interaction.options.getSubcommand();
         if (sub === "on") {
           const channel = interaction.options.getChannel("channel");
-          watchlist.setShortsSchedule(interaction.guildId, {
-            channelId: channel.id, lastRunDate1: null, lastRunDate2: null
-          });
+          const requested = interaction.options.getInteger("interval_minutes");
+          const intervalMinutes = Math.max(15, requested || 60);
+          watchlist.setShortsSchedule(interaction.guildId, { channelId: channel.id, intervalMinutes, lastRun: null });
           await interaction.reply(
-            `Shorts on: daily drops at 4:00pm and 8:00pm ET in ${channel}. Each one features this server's ` +
-            "best-performing real past call (from /alerts, /discover, /degen, or /breakout history) if one's " +
-            "old enough to have a verified result -- otherwise it falls back to today's single biggest live " +
-            "crypto mover. Either way, only ever a winner -- no loser side in this format. Each post includes " +
-            "a ready-to-use image -- save it and post it as a Short, or use it as-is. Posting to YouTube is still on you."
+            `Shorts on: checking every ${intervalMinutes} min in ${channel} for a genuinely new real winning call ` +
+            "(from /alerts, /discover, /degen, or /breakout history) that hasn't been featured in the last few drops -- " +
+            "posts automatically the moment one qualifies, so volume scales with how much is actually happening instead " +
+            "of a fixed number of posts a day. Only ever real, verified winners -- no live-mover fallback and no repeats " +
+            "here (that fallback is still available on-demand via `/shorts now`). Posting to YouTube is still on you."
           );
         } else if (sub === "off") {
           watchlist.setShortsSchedule(interaction.guildId, null);
