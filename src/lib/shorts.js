@@ -5,7 +5,26 @@
 // the same scan.
 
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
+
+// The embedded @font-face fix (below) still silently fails on Railway despite working locally --
+// confirmed via a real screenshot: every rendered text element still comes out as tofu boxes even
+// with the font bytes correctly embedded in the SVG. Root cause: sharp's bundled librsvg still
+// routes text through fontconfig/pango for font matching, and fontconfig needs to build a cache
+// on first use -- a normal dev machine's HOME is a real, long-lived, writable directory, so this
+// always silently succeeds there without anyone noticing it's happening at all. A minimal
+// container frequently runs as a non-root user with HOME pointing at something unwritable (or
+// unset), so the cache write fails -- and that failure never surfaces as a JS exception (it
+// happens inside native code sharp calls into), it just means fontconfig can't resolve ANY font,
+// including the one we just embedded, and every `<text>` element silently renders as an empty
+// glyph box instead. Forcing HOME/XDG_CACHE_HOME to the OS temp dir -- guaranteed writable in any
+// Node environment, containerized or not -- before sharp is even required is the standard fix for
+// this exact class of bug. Set unconditionally, not just when unset, since the real problem on
+// Railway is very likely an already-set-but-unwritable HOME, not a missing one.
+process.env.HOME = os.tmpdir();
+process.env.XDG_CACHE_HOME = os.tmpdir();
+
 const sharp = require("sharp");
 const { fetchDailySeries, fetchIntradaySeries } = require("./marketData");
 const { formatMoney } = require("./format");
