@@ -504,7 +504,33 @@ function buildFallbackHighlight(winner) {
   };
 }
 
+// Title/description text ready to paste straight into YouTube Studio's upload form -- built from
+// the exact same highlight object the image/video came from, so it can never disagree with what's
+// actually on screen. DISCORD_INVITE_URL is optional (falls back to a placeholder that's obviously
+// a placeholder, not a real broken link) so this never silently ships a fake URL.
+const DISCORD_INVITE_URL = process.env.DISCORD_INVITE_URL || "[add your Discord invite link here]";
+
+function buildYoutubeCaption(highlight) {
+  const sign = highlight.pctChange >= 0 ? "+" : "";
+  const pctText = `${sign}${highlight.pctChange.toFixed(1)}%`;
+  const tickerLower = highlight.ticker.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  const title = `${highlight.ticker} ${pctText} — ${highlight.badgeText} #Shorts`.slice(0, 100);
+
+  const description = [
+    `${highlight.ticker}: ${highlight.entryLabel} ${formatMoney(highlight.openPrice)} → Now ${formatMoney(highlight.nowPrice)} (${pctText}).`,
+    "",
+    highlight.timeframeLabel,
+    "",
+    `Real scans, real signals -- not financial advice. Join the Discord: ${DISCORD_INVITE_URL}`,
+    "",
+    `#Shorts #crypto #${tickerLower} #cryptotrading`
+  ].join("\n");
+
+  return { title, description };
+}
+
 module.exports = {
   findMover, generateShortHtml, generateShortImage, generateHighlightImage,
-  buildCallHighlight, buildFallbackHighlight
+  buildCallHighlight, buildFallbackHighlight, buildYoutubeCaption
 };

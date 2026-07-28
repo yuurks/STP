@@ -302,8 +302,9 @@ async function runShortsDrop(guildId, channel) {
   try {
     const mp4 = await generateShortVideo(png);
     const videoFile = new AttachmentBuilder(mp4, { name: "stp-short.mp4" });
+    const { title, description } = shorts.buildYoutubeCaption(highlight);
     await channel.send({
-      content: "Video file for this Short -- download and upload to YouTube.",
+      content: `Video file for this Short -- download and upload to YouTube.\n\n**Title:**\n\`\`\`${title}\`\`\`\n**Description:**\n\`\`\`${description}\`\`\``,
       files: [videoFile]
     });
   } catch (err) {
