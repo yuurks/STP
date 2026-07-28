@@ -131,15 +131,21 @@ async function tryFetchRealOhlc(entry, currentPrice) {
   if (!entry.pairAddress) return null;
   try {
     const candles = await fetchOhlcv(entry.pairAddress, pickGranularity(Date.now() - entry.timestamp));
-    if (candles.length < 2) return null;
+    if (candles.length < 2) {
+      console.error(`Best-call GeckoTerminal data for ${entry.symbol} (${entry.pairAddress}) returned too few candles (${candles.length}) -- likely a too-thin/unindexed pool, skipping enrichment`);
+      return null;
+    }
     // If even the OLDEST fetched candle is already newer than the entry, the entry genuinely
     // isn't visible in this window -- that's a real "not enough history" case, not "it's at the
     // start," and showing a marker on the wrong candle would be worse than showing none.
-    if (candles[0].time > entry.timestamp) return null;
+    if (candles[0].time > entry.timestamp) {
+      console.error(`Best-call GeckoTerminal data for ${entry.symbol} (${entry.pairAddress}) starts after the entry's own timestamp -- not enough history at this granularity, skipping enrichment`);
+      return null;
+    }
 
     const lastClose = candles[candles.length - 1].close;
     if (currentPrice > 0 && Math.abs(lastClose - currentPrice) / currentPrice > MAX_PRICE_DIVERGENCE_RATIO) {
-      console.error(`Best-call GeckoTerminal data for ${entry.symbol} disagrees with confirmed current price (pool close ${lastClose} vs ${currentPrice}) -- likely a stale pairAddress from before a migration, skipping enrichment`);
+      console.error(`Best-call GeckoTerminal data for ${entry.symbol} (${entry.pairAddress}) disagrees with confirmed current price (pool close ${lastClose} vs ${currentPrice}) -- likely a stale pairAddress from before a migration, skipping enrichment`);
       return null;
     }
 
@@ -149,7 +155,7 @@ async function tryFetchRealOhlc(entry, currentPrice) {
     );
     return { ohlc: resampled, entryIndex };
   } catch (err) {
-    console.error(`Best-call GeckoTerminal lookup failed for ${entry.symbol}: ${err.message}`);
+    console.error(`Best-call GeckoTerminal lookup failed for ${entry.symbol} (${entry.pairAddress}): ${err.message}`);
     return null;
   }
 }
