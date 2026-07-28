@@ -14,6 +14,7 @@ const { findDegenCandidates } = degen;
 const { findBreakoutCandidates } = require("./lib/breakout");
 const { fetchTokenTradingData } = require("./lib/dexscreener");
 const { findBestCall } = require("./lib/bestCall");
+const { generateShortVideo } = require("./lib/shortsVideo");
 const { resolveChannelId, fetchLatestVideo } = require("./lib/youtubeWatch");
 const {
   scanEmbed, alertEmbed, discoverEmbed, degenEmbed, degenClosestEmbed, volatilityEmbed, backtestEmbed,
@@ -291,6 +292,23 @@ async function runShortsDrop(guildId, channel) {
   const filename = "stp-short.png";
   const file = new AttachmentBuilder(png, { name: filename });
   await channel.send({ embeds: [highlightEmbed(highlight, filename)], files: [file] });
+
+  // Additive only -- the image above is the real /shorts post and always goes out regardless of
+  // what happens here. This just also hands over a ready-to-upload vertical MP4 (ffmpeg turning
+  // the same PNG into a silent static-hold video) so posting to YouTube Shorts doesn't require
+  // screen-recording the Discord message by hand. A failure here (e.g. ffmpeg missing/erroring in
+  // some future environment) is logged and swallowed, never allowed to look like the /shorts drop
+  // itself failed.
+  try {
+    const mp4 = await generateShortVideo(png);
+    const videoFile = new AttachmentBuilder(mp4, { name: "stp-short.mp4" });
+    await channel.send({
+      content: "Video file for this Short -- download and upload to YouTube.",
+      files: [videoFile]
+    });
+  } catch (err) {
+    console.error(`Shorts video generation failed: ${err.message}`);
+  }
 }
 
 // Checks a watched YouTube channel's public feed for something newer than the last video seen,
