@@ -449,7 +449,7 @@ function formatSurge(ratio) {
 // featured, and the live fallback only ever shows the day's winner.
 function highlightEmbed(highlight, imageFilename) {
   const embed = new EmbedBuilder()
-    .setTitle(highlight.badgeText === "Real Call" ? "💹 Real Call — Verified Result" : "💹 Today's Biggest Mover")
+    .setTitle(highlight.badgeText === "Real Call" ? "📈 Real Call — Verified Result" : "📈 Today's Biggest Mover")
     .setColor(0x0ca34a)
     .setImage(`attachment://${imageFilename}`)
     .setFooter({ text: "Technical pattern data, not financial advice. Save the image above for your Short." })
