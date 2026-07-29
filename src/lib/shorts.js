@@ -489,10 +489,22 @@ function highlightSvg(highlight, reveal) {
   const showCard = reveal?.showCard ?? true;
   const showCTA = reveal?.showCTA ?? true;
   const showFooter = reveal?.showFooter ?? true;
+  // Always present (not gated behind any content-reveal beat) -- a persistent spinning watermark
+  // in the corner, independent of the left-side logo/badge which is part of the reveal sequence.
+  // 0 on the static image (generateHighlightImage never passes a reveal object, so this defaults
+  // to a fixed, non-spinning 0deg there -- only the frame-by-frame video actually animates it).
+  const logoRotationDeg = reveal?.logoRotationDeg ?? 0;
+  const rightLogoSize = 56, rightLogoX = W - 70 - rightLogoSize, rightLogoY = 70;
+  const rightLogoCx = rightLogoX + rightLogoSize / 2, rightLogoCy = rightLogoY + rightLogoSize / 2;
 
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
   <rect width="${W}" height="${H}" fill="${COLORS.surface}"/>
   <rect x="8" y="8" width="${W - 16}" height="${H - 16}" rx="36" fill="none" stroke="${COLORS.winner}" stroke-width="6" stroke-opacity="0.55"/>
+
+  <g transform="rotate(${logoRotationDeg.toFixed(1)} ${rightLogoCx} ${rightLogoCy})">
+    <clipPath id="logoClipRight"><rect x="${rightLogoX}" y="${rightLogoY}" width="${rightLogoSize}" height="${rightLogoSize}" rx="14"/></clipPath>
+    <image href="${logoSrc()}" x="${rightLogoX}" y="${rightLogoY}" width="${rightLogoSize}" height="${rightLogoSize}" clip-path="url(#logoClipRight)"/>
+  </g>
 
   ${showLogo ? `
   <clipPath id="logoClip"><rect x="70" y="80" width="64" height="64" rx="16"/></clipPath>
@@ -567,7 +579,24 @@ function buildRevealFrames(highlight) {
   const showEntryMarker = highlight.badgeText === "Real Call";
 
   const frames = [];
-  const push = (holdMs, reveal) => frames.push({ svg: highlightSvg(highlight, reveal), holdMs });
+  // The corner logo needs to look like it's continuously spinning even through a single long
+  // "hold" (the final beat alone accounts for most of the video) -- so every push() call splits
+  // its hold into ~150ms sub-frames (about 6.7fps, plenty smooth for a small watermark) and
+  // advances the rotation angle across ALL of them using one running clock, not one that resets
+  // per beat. Content visibility (reveal.*) stays exactly what the caller asked for across every
+  // sub-frame; only logoRotationDeg changes frame to frame.
+  const ROTATION_FRAME_MS = 250;
+  const ROTATION_PERIOD_MS = 3000; // one full 360deg spin every 3s
+  let clockMs = 0;
+  const push = (holdMs, reveal) => {
+    const steps = Math.max(1, Math.round(holdMs / ROTATION_FRAME_MS));
+    const stepMs = holdMs / steps;
+    for (let i = 0; i < steps; i++) {
+      const logoRotationDeg = (clockMs / ROTATION_PERIOD_MS) * 360 % 360;
+      frames.push({ svg: highlightSvg(highlight, { ...reveal, logoRotationDeg }), holdMs: stepMs });
+      clockMs += stepMs;
+    }
+  };
 
   const bare = { showLogo: false, showHeadline: false, showCaption: false, showCard: false, showCTA: false, showFooter: false };
   const withLogo = { ...bare, showLogo: true };
