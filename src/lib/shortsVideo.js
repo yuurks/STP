@@ -17,6 +17,15 @@ const ffmpegPath = require("ffmpeg-static");
 
 const DEFAULT_DURATION_SECONDS = 15; // matches shorts.js's REVEAL_VIDEO_MS -- this is only the fallback path if the animated reveal pipeline fails, but should still be the same length
 
+// "-preset ultrafast" on every libx264 encode below: a real Railway run showed both this simple
+// static-hold encode AND the more complex animated one stalling out at single-digit frame counts
+// (speed=0.258x -- painfully slow) even with threads already capped at 2, meaning the container's
+// available CPU is the real constraint, not a code bug to keep chasing with more parameter tweaks.
+// x264's presets trade encoding CPU time for compression efficiency, not visual quality/resolution
+// -- "ultrafast" costs some file size (still tiny for this content: a mostly-static UI card, not
+// fast-motion video) in exchange for dramatically less CPU work per frame, which is exactly the
+// trade this workload needs on constrained/shared hardware.
+
 function run(args, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
     execFile(ffmpegPath, args, { timeout: timeoutMs }, (err, stdout, stderr) => {
@@ -49,6 +58,7 @@ async function generateShortVideo(pngBuffer, durationSeconds = DEFAULT_DURATION_
       "-vf", "format=yuv420p",
       "-c:v", "libx264",
       "-threads", "2",
+      "-preset", "ultrafast",
       "-pix_fmt", "yuv420p",
       "-movflags", "+faststart",
       outputPath
@@ -141,6 +151,7 @@ async function generateAnimatedShortVideo(frames) {
       "-vsync", "cfr",
       "-c:v", "libx264",
       "-threads", "2",
+      "-preset", "ultrafast",
       "-pix_fmt", "yuv420p"
     );
     if (musicPath) {

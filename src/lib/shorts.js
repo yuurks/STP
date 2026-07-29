@@ -622,13 +622,15 @@ function* buildRevealFrames(highlight) {
 
   // The corner logo needs to look like it's continuously spinning even through a single long
   // "hold" (the final beat alone accounts for most of the video) -- so every pushFrames() call
-  // splits its hold into ~100ms sub-frames (10fps, smooth for a small watermark) and advances the
-  // rotation angle across ALL of them using one running clock, not one that resets per beat.
-  // Content visibility (reveal.*) stays exactly what the caller asked for across every sub-frame;
-  // only logoRotationDeg changes frame to frame.
-  const ROTATION_FRAME_MS = 100; // 10fps -- was 250ms (4fps, visibly steppy) while ffmpeg's hang
-  // bug was the real bottleneck; that's fixed now, so smoothness no longer needs to be traded for
-  // render speed to the same degree.
+  // splits its hold into sub-frames and advances the rotation angle across ALL of them using one
+  // running clock, not one that resets per beat. Content visibility (reveal.*) stays exactly what
+  // the caller asked for across every sub-frame; only logoRotationDeg changes frame to frame.
+  // 200ms (5fps): real Railway runs showed both this pipeline AND the plain static-hold fallback
+  // stalling out well before finishing -- even the SIMPLEST possible encode struggled, meaning
+  // available CPU on the container is the real constraint. Fewer total frames (this, plus
+  // -preset ultrafast in shortsVideo.js) directly reduces how much encoding work is needed,
+  // trading some rotation smoothness back for actually finishing reliably.
+  const ROTATION_FRAME_MS = 200;
   const ROTATION_PERIOD_MS = 3000; // one full 360deg spin every 3s
   let clockMs = 0;
   function* pushFrames(holdMs, reveal) {
