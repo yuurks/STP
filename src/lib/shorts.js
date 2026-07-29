@@ -596,14 +596,23 @@ const REVEAL_VIDEO_MS = 15000;
 const CHART_REVEAL_MS = 1400;
 const MAX_CHART_STEPS = 24; // caps frame count (and render/encode time) regardless of candle count
 
-// Builds an ordered list of { svg, holdMs } frames that together tell the same story as the
-// static /shorts image, just revealed in beats instead of shown all at once: logo -> headline ->
-// empty card -> ticker -> percentage counting up -> price line -> chart building in candle-by-
-// candle (or point-by-point for the 2-point line format) -> entry marker (Real Call only) -> CTA.
-// Every frame is built from the exact same highlightSvg/cardSvg/candlePaths/chartPaths functions
-// that render the real static PNG -- this never approximates the chart in a different format the
-// way an early concept mockup did; it's the same real chart, just revealed progressively.
-function buildRevealFrames(highlight) {
+// Yields { svg, holdMs } frames one at a time (a generator, not an array) that together tell the
+// same story as the static /shorts image, just revealed in beats instead of shown all at once:
+// logo -> headline -> empty card -> ticker -> percentage counting up -> price line -> chart
+// building in candle-by-candle (or point-by-point for the 2-point line format) -> entry marker
+// (Real Call only) -> CTA. Every frame is built from the exact same highlightSvg/cardSvg/
+// candlePaths/chartPaths functions that render the real static PNG -- this never approximates the
+// chart in a different format the way an early concept mockup did; it's the same real chart, just
+// revealed progressively.
+//
+// Deliberately a generator instead of building and returning a full array: a real Railway OOM
+// kill happened even after fixing the (much larger) embedded-logo issue, once frame count grew
+// with the smoother 10fps rotation -- materializing every frame's SVG text in memory at once,
+// however small each one now is individually, is still a real cost multiplied by 150+ frames on
+// top of whatever else is running in the same container. A generator means only ONE frame's SVG
+// text exists in memory at any moment; the caller (generateRevealFramePngs) rasterizes and
+// discards each one before the next is even built.
+function* buildRevealFrames(highlight) {
   if (!highlight?.closes?.length) {
     throw new Error("highlight is missing closes -- needs at least a 2-point [entry, now] line");
   }
@@ -611,27 +620,26 @@ function buildRevealFrames(highlight) {
   const itemCount = useCandles ? highlight.ohlc.length : highlight.closes.length;
   const showEntryMarker = highlight.badgeText === "Real Call";
 
-  const frames = [];
   // The corner logo needs to look like it's continuously spinning even through a single long
-  // "hold" (the final beat alone accounts for most of the video) -- so every push() call splits
-  // its hold into ~150ms sub-frames (about 6.7fps, plenty smooth for a small watermark) and
-  // advances the rotation angle across ALL of them using one running clock, not one that resets
-  // per beat. Content visibility (reveal.*) stays exactly what the caller asked for across every
-  // sub-frame; only logoRotationDeg changes frame to frame.
+  // "hold" (the final beat alone accounts for most of the video) -- so every pushFrames() call
+  // splits its hold into ~100ms sub-frames (10fps, smooth for a small watermark) and advances the
+  // rotation angle across ALL of them using one running clock, not one that resets per beat.
+  // Content visibility (reveal.*) stays exactly what the caller asked for across every sub-frame;
+  // only logoRotationDeg changes frame to frame.
   const ROTATION_FRAME_MS = 100; // 10fps -- was 250ms (4fps, visibly steppy) while ffmpeg's hang
   // bug was the real bottleneck; that's fixed now, so smoothness no longer needs to be traded for
   // render speed to the same degree.
   const ROTATION_PERIOD_MS = 3000; // one full 360deg spin every 3s
   let clockMs = 0;
-  const push = (holdMs, reveal) => {
+  function* pushFrames(holdMs, reveal) {
     const steps = Math.max(1, Math.round(holdMs / ROTATION_FRAME_MS));
     const stepMs = holdMs / steps;
     for (let i = 0; i < steps; i++) {
       const logoRotationDeg = (clockMs / ROTATION_PERIOD_MS) * 360 % 360;
-      frames.push({ svg: highlightSvg(highlight, { ...reveal, logoRotationDeg }), holdMs: stepMs });
+      yield { svg: highlightSvg(highlight, { ...reveal, logoRotationDeg }), holdMs: stepMs };
       clockMs += stepMs;
     }
-  };
+  }
 
   const bare = { showLogo: false, showHeadline: false, showCaption: false, showCard: false, showCTA: false, showFooter: false };
   const withLogo = { ...bare, showLogo: true };
@@ -641,30 +649,30 @@ function buildRevealFrames(highlight) {
   const withTickerCard = { showTag: true, showTicker: true, showPct: false, showPriceLine: false, showChart: false, showEntryMarker: false };
   const withTicker = { ...withCard, card: withTickerCard };
 
-  push(300, bare);
-  push(600, withLogo);
-  push(700, withHeadline);
-  push(400, withCard);
-  push(150, withTicker);
+  yield* pushFrames(300, bare);
+  yield* pushFrames(600, withLogo);
+  yield* pushFrames(700, withHeadline);
+  yield* pushFrames(400, withCard);
+  yield* pushFrames(150, withTicker);
 
   // Percentage counts up over 6 steps rather than jumping straight to the final value -- a count-
   // up reads as "this is being calculated," which is a better fit for a real-data card than an
   // instant number would be.
   const PCT_STEPS = 6;
   for (let s = 1; s <= PCT_STEPS; s++) {
-    push(1200 / PCT_STEPS, {
+    yield* pushFrames(1200 / PCT_STEPS, {
       ...withCard,
       card: { ...withTickerCard, showPct: true, pctFraction: s / PCT_STEPS }
     });
   }
 
   const withPriceLine = { ...withTickerCard, showPct: true, pctFraction: 1, showPriceLine: true };
-  push(550, { ...withCard, card: withPriceLine });
+  yield* pushFrames(550, { ...withCard, card: withPriceLine });
 
   const chartSteps = Math.min(itemCount, MAX_CHART_STEPS);
   for (let s = 1; s <= chartSteps; s++) {
     const revealCount = Math.ceil((s / chartSteps) * itemCount);
-    push(CHART_REVEAL_MS / chartSteps, {
+    yield* pushFrames(CHART_REVEAL_MS / chartSteps, {
       ...withCard,
       card: { ...withPriceLine, showChart: true, chartRevealCount: revealCount, showEntryMarker: false }
     });
@@ -672,13 +680,11 @@ function buildRevealFrames(highlight) {
 
   const elapsedBeforeFinal = 300 + 600 + 700 + 400 + 150 + 1200 + 550 + CHART_REVEAL_MS;
   if (showEntryMarker) {
-    push(400, { ...withCard, card: { ...withPriceLine, showChart: true, showEntryMarker: true } });
-    push(REVEAL_VIDEO_MS - elapsedBeforeFinal - 400, undefined); // undefined reveal = everything shown, same as the real static image
+    yield* pushFrames(400, { ...withCard, card: { ...withPriceLine, showChart: true, showEntryMarker: true } });
+    yield* pushFrames(REVEAL_VIDEO_MS - elapsedBeforeFinal - 400, undefined); // undefined reveal = everything shown, same as the real static image
   } else {
-    push(REVEAL_VIDEO_MS - elapsedBeforeFinal, undefined);
+    yield* pushFrames(REVEAL_VIDEO_MS - elapsedBeforeFinal, undefined);
   }
-
-  return frames;
 }
 
 // Rasterizes buildRevealFrames' output to real PNG buffers via the same sharp/SVG pipeline the
