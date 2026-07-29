@@ -14,7 +14,6 @@ const path = require("path");
 const crypto = require("crypto");
 const { execFile } = require("child_process");
 const ffmpegPath = require("ffmpeg-static");
-const { generateCornerLogoPng, CORNER_LOGO_SIZE } = require("./shorts");
 
 const DEFAULT_DURATION_SECONDS = 15; // matches shorts.js's REVEAL_VIDEO_MS -- this is only the fallback path if the animated reveal pipeline fails, but should still be the same length
 
@@ -104,20 +103,6 @@ function resolveMusicPath() {
   return path.join(MUSIC_DIR, pick);
 }
 
-// Where shorts.js's highlightSvg draws the corner logo's rotation pivot -- kept in exact sync
-// with those constants (W=1080, rightLogoX = W-70-112, rightLogoY = 70) since this overlay has to
-// land on the same spot the SVG used to draw it in-place.
-const CARD_WIDTH = 1080;
-const LOGO_X = CARD_WIDTH - 70 - CORNER_LOGO_SIZE, LOGO_Y = 70;
-const LOGO_CENTER_X = LOGO_X + CORNER_LOGO_SIZE / 2, LOGO_CENTER_Y = LOGO_Y + CORNER_LOGO_SIZE / 2;
-// A square rotated about its center needs a canvas this big (its own diagonal) to show every
-// corner at every angle without clipping -- ffmpeg's rotate filter fills the rest with fillcolor
-// (here "none", i.e. transparent) rather than cropping.
-const ROTATED_CANVAS = Math.ceil(CORNER_LOGO_SIZE * Math.SQRT2);
-const OVERLAY_X = Math.round(LOGO_CENTER_X - ROTATED_CANVAS / 2);
-const OVERLAY_Y = Math.round(LOGO_CENTER_Y - ROTATED_CANVAS / 2);
-const LOGO_ROTATION_PERIOD_SEC = 3; // one full 360deg spin every 3s -- matches the old per-frame rotation's rate
-
 // Turns shorts.js's buildRevealFrames/generateRevealFramePngs output (an ordered list of real
 // rendered PNG frames, each with how long to hold it) into a real animated MP4, via ffmpeg's
 // concat demuxer -- each image gets its own on-screen duration rather than a fixed per-frame
@@ -126,12 +111,12 @@ const LOGO_ROTATION_PERIOD_SEC = 3; // one full 360deg spin every 3s -- matches 
 // a second time with no duration line after it -- a well-known concat-demuxer quirk where the
 // final entry's duration is otherwise silently dropped; confirmed necessary, not just caution.
 //
-// The corner logo is NOT part of any content frame above (see shorts.js's showCornerLogo) --
-// instead it's composited here as its own input, spun continuously by ffmpeg's rotate filter
-// (angle driven by real elapsed time `t`, not a value we pre-computed per frame) and layered on
-// via overlay. That's what makes the rotation genuinely smooth rather than a series of jump cuts
-// to a new angle every N milliseconds, which is all a per-frame approach could ever produce no
-// matter how many frames it spent on it.
+// The corner logo's rotation is baked into each content frame's SVG (see shorts.js's
+// buildRevealFrames) rather than composited here via an ffmpeg filter graph -- a filter-based
+// approach (rotate+overlay, driven by real elapsed time) is the more technically correct fix for
+// zero visible stepping, and was tried, but it reliably got SIGKILLed by Railway's Trial-plan
+// memory limit regardless of preset/encoder tuning across several real deploys. This simpler
+// concat-only pipeline has a long track record of not crashing here.
 async function generateAnimatedShortVideo(frames) {
   if (!frames.length) throw new Error("generateAnimatedShortVideo needs at least one frame");
 
@@ -139,7 +124,6 @@ async function generateAnimatedShortVideo(frames) {
   const frameDir = path.join(os.tmpdir(), `stp-reveal-${tmpId}`);
   fs.mkdirSync(frameDir, { recursive: true });
   const listPath = path.join(frameDir, "list.txt");
-  const logoPath = path.join(frameDir, "corner-logo.png");
   const outputPath = path.join(os.tmpdir(), `stp-reveal-${tmpId}.mp4`);
   const musicPath = resolveMusicPath();
 
@@ -149,7 +133,6 @@ async function generateAnimatedShortVideo(frames) {
       fs.writeFileSync(p, frame.png);
       return p;
     });
-    fs.writeFileSync(logoPath, await generateCornerLogoPng());
 
     const listLines = [];
     frames.forEach((frame, i) => {
@@ -161,61 +144,23 @@ async function generateAnimatedShortVideo(frames) {
     listLines.push(`file '${framePaths[framePaths.length - 1].replace(/\\/g, "/")}'`);
     fs.writeFileSync(listPath, listLines.join("\n"));
 
-    // Total on-screen duration, computed directly from the frame holds rather than left to ffmpeg
-    // to infer -- confirmed by a real local run that "-shortest" alone does NOT reliably bound
-    // this once the logo overlay (an infinite "-loop 1" input) is in the filter graph: the encode
-    // just kept going past 15 real MINUTES of output before the exec timeout killed it, instead of
-    // stopping at the content video's true ~15s length. An explicit "-t" on the output is a hard,
-    // unambiguous cap that doesn't depend on how overlay/filter_complex propagates EOF between a
-    // finite main input and an infinite secondary one.
-    const totalDurationSec = frames.reduce((sum, f) => sum + f.holdMs, 0) / 1000;
-
-    // Input order: 0 = content frames (finite duration, sets the real video length), 1 = music
-    // (only if present; -stream_loop -1 makes it infinite), last = the looped logo still (also
-    // infinite -- "-loop 1" repeats a single image forever).
     const args = [
       "-y",
       "-f", "concat",
       "-safe", "0",
       "-i", listPath
     ];
-    let audioInputIndex = null;
     if (musicPath) {
+      // -stream_loop -1 repeats the track indefinitely so a short loop still covers the full
+      // video regardless of its own length, and -shortest then cuts the OUTPUT to the video's
+      // real length (fixed by the image sequence above) rather than the now-infinite audio.
       args.push("-stream_loop", "-1", "-i", musicPath);
-      audioInputIndex = 1;
     }
-    const logoInputIndex = musicPath ? 2 : 1;
-    args.push("-loop", "1", "-i", logoPath);
-
-    // [0:v]fps=30 first, BEFORE overlay: a real local run showed that feeding the concat stream's
-    // irregular per-frame durations (some as short as ~20ms, the final hold ~9s) straight into
-    // overlay against the logo's own steady clock made overlay's frame-sync stop early -- it
-    // simply never advanced far enough to reach the long final hold, truncating a 15s video to
-    // ~5.7s. Converting the main stream to genuine constant-frame-rate first (duplicating the long
-    // hold into real repeated frames, exactly what "fps" is for) fixed it outright -- confirmed by
-    // re-running the same list.txt both ways and diffing the output duration.
-    // format=yuv420p on [0:v] BEFORE fps/overlay, not after: our source PNGs decode as RGBA (4
-    // bytes/pixel), and leaving that alone through both fps's rate-conversion (which has to hold/
-    // duplicate whole 1080x1920 frames) and overlay's compositing nearly triples the per-frame
-    // memory those stages juggle vs converting to yuv420p (~1.5 bytes/pixel) right after decode,
-    // same as the old pre-overlay pipeline did. Only the small rotating logo layer actually needs
-    // alpha (for its rounded corners' transparency); the background layer never did.
-    const filterComplex =
-      `[0:v]format=yuv420p,fps=30[mainv];` +
-      `[${logoInputIndex}:v]format=rgba,rotate=a='2*PI*t/${LOGO_ROTATION_PERIOD_SEC}':fillcolor=none:ow=${ROTATED_CANVAS}:oh=${ROTATED_CANVAS}[rotlogo];` +
-      `[mainv][rotlogo]overlay=${OVERLAY_X}:${OVERLAY_Y}:format=auto,format=yuv420p[vout]`;
-
-    args.push("-filter_complex", filterComplex, "-map", "[vout]");
-    if (musicPath) args.push("-map", `${audioInputIndex}:a`);
-    // "-preset ultrafast" + explicit "-bf 0 -rc-lookahead 0", not "veryfast": a real Railway run
-    // confirmed a SIGKILL (err.signal, not a code/timeout -- a genuine OOM kill) on this exact
-    // filter graph under "veryfast", which unlike "ultrafast" enables B-frames + multi-frame
-    // lookahead by default (visible in ffmpeg's own log as bframes=3, rc_lookahead=10) -- each of
-    // those needs several full 1080x1920 frames held in memory at once for reordering, on top of
-    // this filter graph's own overlay/rotate buffering. "ultrafast" (with bf/lookahead forced off
-    // regardless) is the configuration that reliably worked before today's changes. crf 18 is kept
-    // -- it affects bitrate/quality decisions, not the encoder's frame-buffer memory footprint.
     args.push(
+      "-map", "0:v",
+      "-vf", "format=yuv420p",
+      "-r", "30",
+      "-vsync", "cfr",
       "-c:v", "libx264",
       "-threads", "2",
       "-preset", "ultrafast",
@@ -224,8 +169,10 @@ async function generateAnimatedShortVideo(frames) {
       "-crf", "18",
       "-pix_fmt", "yuv420p"
     );
-    if (musicPath) args.push("-c:a", "aac", "-b:a", "128k");
-    args.push("-t", totalDurationSec.toFixed(3), "-shortest", "-movflags", "+faststart", outputPath);
+    if (musicPath) {
+      args.push("-map", "1:a", "-c:a", "aac", "-b:a", "128k", "-shortest");
+    }
+    args.push("-movflags", "+faststart", outputPath);
 
     // 60s wasn't enough headroom on Railway's actual hardware -- a real run there showed ffmpeg
     // genuinely encoding (climbing frame count, real bitrate), not stuck, just slower than on a

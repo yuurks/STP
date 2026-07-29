@@ -527,23 +527,6 @@ function logoSrc() {
   return logoSrcCache;
 }
 
-// The rotating corner watermark's source image, rendered once as its own small transparent PNG
-// (same rounded-corner clip highlightSvg used to draw it in-SVG) so shortsVideo.js can hand it to
-// ffmpeg as a real file and let ffmpeg's own rotate filter spin it continuously -- see the
-// showCornerLogo note in highlightSvg for why that's the smooth-rotation fix and per-frame SVG
-// rotation wasn't. CORNER_LOGO_SIZE is exported so shortsVideo.js's overlay-position math (which
-// needs to know this image's exact pixel dimensions) can never silently drift out of sync with it.
-const CORNER_LOGO_SIZE = 112;
-async function generateCornerLogoPng() {
-  await ensureLogoSrcCached();
-  const s = CORNER_LOGO_SIZE;
-  const svg = `<svg width="${s}" height="${s}" viewBox="0 0 ${s} ${s}" xmlns="http://www.w3.org/2000/svg">
-    <clipPath id="c"><rect x="0" y="0" width="${s}" height="${s}" rx="28"/></clipPath>
-    <image href="${logoSrc()}" x="0" y="0" width="${s}" height="${s}" clip-path="url(#c)"/>
-  </svg>`;
-  return sharp(Buffer.from(svg)).png().toBuffer();
-}
-
 // Builds the SVG markup only (no rasterizing) -- split out from generateHighlightImage so the
 // reveal-video pipeline (buildRevealFrames) can render dozens of partial-content frames cheaply
 // without redoing the sharp/PNG round trip every time it just wants the markup. `reveal`, when
@@ -569,14 +552,6 @@ function highlightSvg(highlight, reveal) {
   // 0 on the static image (generateHighlightImage never passes a reveal object, so this defaults
   // to a fixed, non-spinning 0deg there -- only the frame-by-frame video actually animates it).
   const logoRotationDeg = reveal?.logoRotationDeg ?? 0;
-  // The reveal-video pipeline (buildRevealFrames) renders every content frame with this OFF and
-  // composites a continuously-rotating version itself via an ffmpeg filter (see shortsVideo.js's
-  // generateAnimatedShortVideo/generateCornerLogoPng) -- a discrete angle-per-frame rotation can
-  // only ever look stepped no matter how many frames you render, since each step is still a jump
-  // cut to a new angle. ffmpeg's rotate filter computes the angle from real elapsed time on every
-  // output frame instead, which is genuinely continuous. Only the static image (reveal undefined)
-  // still draws this in-SVG at a fixed angle.
-  const showCornerLogo = reveal?.showCornerLogo ?? true;
   const rightLogoSize = 112, rightLogoX = W - 70 - rightLogoSize, rightLogoY = 70;
   const rightLogoCx = rightLogoX + rightLogoSize / 2, rightLogoCy = rightLogoY + rightLogoSize / 2;
 
@@ -584,12 +559,10 @@ function highlightSvg(highlight, reveal) {
   <rect width="${W}" height="${H}" fill="${COLORS.surface}"/>
   <rect x="8" y="8" width="${W - 16}" height="${H - 16}" rx="36" fill="none" stroke="${COLORS.winner}" stroke-width="6" stroke-opacity="0.55"/>
 
-  ${showCornerLogo ? `
   <g transform="rotate(${logoRotationDeg.toFixed(1)} ${rightLogoCx} ${rightLogoCy})">
     <clipPath id="logoClipRight"><rect x="${rightLogoX}" y="${rightLogoY}" width="${rightLogoSize}" height="${rightLogoSize}" rx="28"/></clipPath>
     <image href="${logoSrc()}" x="${rightLogoX}" y="${rightLogoY}" width="${rightLogoSize}" height="${rightLogoSize}" clip-path="url(#logoClipRight)"/>
   </g>
-  ` : ""}
 
   ${showLogo ? `
   <clipPath id="logoClip"><rect x="70" y="80" width="64" height="64" rx="16"/></clipPath>
@@ -673,14 +646,26 @@ function* buildRevealFrames(highlight) {
   const itemCount = useCandles ? highlight.ohlc.length : highlight.closes.length;
   const showEntryMarker = highlight.badgeText === "Real Call";
 
-  // The corner logo's rotation no longer lives here at all -- see the showCornerLogo note in
-  // highlightSvg and generateCornerLogoPng/shortsVideo.js's generateAnimatedShortVideo, which
-  // composite a continuously-rotating version via ffmpeg's own rotate filter after the fact. Every
-  // content frame below renders with the corner logo switched off (forced by pushFrames), so this
-  // generator only has to produce ONE frame per reveal beat instead of subdividing every hold into
-  // rotation sub-frames -- a real cut in render/encode work on top of being the actual smoothness fix.
+  // Tried compositing this via an ffmpeg rotate+overlay filter instead (genuinely continuous,
+  // driven by real elapsed time rather than a per-frame angle) -- it's the technically correct fix
+  // for zero stepping, but it reliably got SIGKILLed by the OOM killer on Railway's Trial plan
+  // regardless of preset/encoder tuning (confirmed across several real deploys). Back to baking the
+  // rotation into each content frame's SVG, which has a long track record of not crashing here --
+  // every pushFrames() call splits its hold into sub-frames and advances the rotation angle across
+  // ALL of them using one running clock, not one that resets per beat.
+  // 150ms (~6.7fps): 100ms caused a real OOM in the past; 200ms was the safe fallback. This splits
+  // the difference -- if it ever proves unsafe again, widen it back toward 200ms first.
+  const ROTATION_FRAME_MS = 150;
+  const ROTATION_PERIOD_MS = 3000; // one full 360deg spin every 3s
+  let clockMs = 0;
   function* pushFrames(holdMs, reveal) {
-    yield { svg: highlightSvg(highlight, { ...reveal, showCornerLogo: false }), holdMs };
+    const steps = Math.max(1, Math.round(holdMs / ROTATION_FRAME_MS));
+    const stepMs = holdMs / steps;
+    for (let i = 0; i < steps; i++) {
+      const logoRotationDeg = (clockMs / ROTATION_PERIOD_MS) * 360 % 360;
+      yield { svg: highlightSvg(highlight, { ...reveal, logoRotationDeg }), holdMs: stepMs };
+      clockMs += stepMs;
+    }
   }
 
   const bare = { showLogo: false, showHeadline: false, showCaption: false, showCard: false, showCTA: false, showFooter: false };
@@ -830,5 +815,5 @@ function buildYoutubeCaption(highlight) {
 module.exports = {
   findMover, generateShortHtml, generateShortImage, generateHighlightImage,
   buildCallHighlight, buildFallbackHighlight, buildYoutubeCaption, DISCORD_INVITE_URL,
-  buildRevealFrames, generateRevealFramePngs, generateCornerLogoPng, CORNER_LOGO_SIZE
+  buildRevealFrames, generateRevealFramePngs
 };
