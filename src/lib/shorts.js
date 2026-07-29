@@ -460,12 +460,29 @@ async function generateShortImage(winner, loser) {
 // ~20% of the screen -- a CTA any lower gets hidden behind that chrome. 1470 clears it with real
 // margin both to the card above (which ends at 1440) and to YouTube's overlay below.
 //
-// Read once and cached -- the logo never changes mid-process, and buildRevealFrames calls this
-// dozens of times per video (once per animation frame), where re-reading the same file from disk
-// every time would be pure waste.
+// Resized once and cached, not the raw source file -- assets/logo.png is a 1.4MB, high-resolution
+// original, but it only ever displays at 56-64px in these cards. Embedding the raw file's ~1.9MB
+// base64 text directly was harmless for a single static image, but buildRevealFrames now builds
+// an array holding EVERY animation frame's full SVG text at once (see there), and this logo gets
+// embedded twice per frame (left logo + the rotating corner one) -- confirmed via a real Railway
+// OOM kill that ~100 frames x 2 embeds x 1.9MB was pushing memory well past 400MB just for logo
+// text. 128px is generous headroom over the largest actual display size (64px) for a crisp image
+// while cutting that per-frame cost by roughly 40x (a few KB instead of ~1.9MB).
+//
+// Split into an async populate step and a sync getter rather than making logoSrc() itself async,
+// because it's called deep inside highlightSvg/buildRevealFrames's per-frame loop -- threading
+// async through that whole call chain would be a much larger, riskier change than just making
+// every caller `await ensureLogoSrcCached()` once, up front, before touching anything synchronous.
 let logoSrcCache = null;
+async function ensureLogoSrcCached() {
+  if (!logoSrcCache) {
+    const resized = await sharp(LOGO_PATH).resize(128, 128).png().toBuffer();
+    logoSrcCache = `data:image/png;base64,${resized.toString("base64")}`;
+  }
+  return logoSrcCache;
+}
 function logoSrc() {
-  if (!logoSrcCache) logoSrcCache = `data:image/png;base64,${fs.readFileSync(LOGO_PATH).toString("base64")}`;
+  if (!logoSrcCache) throw new Error("logoSrc() called before ensureLogoSrcCached() resolved");
   return logoSrcCache;
 }
 
@@ -554,6 +571,7 @@ async function generateHighlightImage(highlight) {
   if (!highlight?.closes?.length) {
     throw new Error("highlight is missing closes -- needs at least a 2-point [entry, now] line");
   }
+  await ensureLogoSrcCached();
   return sharp(Buffer.from(highlightSvg(highlight))).png().toBuffer();
 }
 
@@ -650,6 +668,7 @@ function buildRevealFrames(highlight) {
 // static image uses -- never a different renderer, so every frame is pixel-faithful to what
 // generateHighlightImage would produce at that same reveal state.
 async function generateRevealFramePngs(highlight) {
+  await ensureLogoSrcCached();
   const frames = buildRevealFrames(highlight);
   const rendered = [];
   for (const frame of frames) {
