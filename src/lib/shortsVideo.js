@@ -148,7 +148,12 @@ async function generateAnimatedShortVideo(frames) {
     }
     args.push("-movflags", "+faststart", outputPath);
 
-    await run(args, 60000);
+    // 60s wasn't enough headroom on Railway's actual hardware -- a real run there showed ffmpeg
+    // genuinely encoding (climbing frame count, real bitrate), not stuck, just slower than on a
+    // dev machine once you add more frames (10fps logo rotation) and music mixing on a 2-thread
+    // cap. 3 minutes gives real margin without masking an actual hang (which still shows up as
+    // the same fallback-to-static-hold behavior, just after waiting longer first).
+    await run(args, 180000);
     return fs.readFileSync(outputPath);
   } finally {
     fs.rm(frameDir, { recursive: true, force: true }, () => {});
