@@ -207,10 +207,20 @@ async function generateAnimatedShortVideo(frames) {
 
     args.push("-filter_complex", filterComplex, "-map", "[vout]");
     if (musicPath) args.push("-map", `${audioInputIndex}:a`);
+    // "-preset ultrafast" + explicit "-bf 0 -rc-lookahead 0", not "veryfast": a real Railway run
+    // confirmed a SIGKILL (err.signal, not a code/timeout -- a genuine OOM kill) on this exact
+    // filter graph under "veryfast", which unlike "ultrafast" enables B-frames + multi-frame
+    // lookahead by default (visible in ffmpeg's own log as bframes=3, rc_lookahead=10) -- each of
+    // those needs several full 1080x1920 frames held in memory at once for reordering, on top of
+    // this filter graph's own overlay/rotate buffering. "ultrafast" (with bf/lookahead forced off
+    // regardless) is the configuration that reliably worked before today's changes. crf 18 is kept
+    // -- it affects bitrate/quality decisions, not the encoder's frame-buffer memory footprint.
     args.push(
       "-c:v", "libx264",
       "-threads", "2",
-      "-preset", "veryfast",
+      "-preset", "ultrafast",
+      "-bf", "0",
+      "-rc-lookahead", "0",
       "-crf", "18",
       "-pix_fmt", "yuv420p"
     );
