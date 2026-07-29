@@ -511,7 +511,7 @@ function highlightSvg(highlight, reveal) {
   // 0 on the static image (generateHighlightImage never passes a reveal object, so this defaults
   // to a fixed, non-spinning 0deg there -- only the frame-by-frame video actually animates it).
   const logoRotationDeg = reveal?.logoRotationDeg ?? 0;
-  const rightLogoSize = 56, rightLogoX = W - 70 - rightLogoSize, rightLogoY = 70;
+  const rightLogoSize = 112, rightLogoX = W - 70 - rightLogoSize, rightLogoY = 70;
   const rightLogoCx = rightLogoX + rightLogoSize / 2, rightLogoCy = rightLogoY + rightLogoSize / 2;
 
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
@@ -519,7 +519,7 @@ function highlightSvg(highlight, reveal) {
   <rect x="8" y="8" width="${W - 16}" height="${H - 16}" rx="36" fill="none" stroke="${COLORS.winner}" stroke-width="6" stroke-opacity="0.55"/>
 
   <g transform="rotate(${logoRotationDeg.toFixed(1)} ${rightLogoCx} ${rightLogoCy})">
-    <clipPath id="logoClipRight"><rect x="${rightLogoX}" y="${rightLogoY}" width="${rightLogoSize}" height="${rightLogoSize}" rx="14"/></clipPath>
+    <clipPath id="logoClipRight"><rect x="${rightLogoX}" y="${rightLogoY}" width="${rightLogoSize}" height="${rightLogoSize}" rx="28"/></clipPath>
     <image href="${logoSrc()}" x="${rightLogoX}" y="${rightLogoY}" width="${rightLogoSize}" height="${rightLogoSize}" clip-path="url(#logoClipRight)"/>
   </g>
 
