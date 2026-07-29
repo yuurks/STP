@@ -209,6 +209,9 @@ function escapeXml(s) {
 // stepX are always computed from the FULL closes array regardless, so the axis scale and point
 // spacing never shift between frames as more of the line becomes visible -- only reveals more of
 // an already-fixed line, never redraws it at a different scale.
+// visibleCount may be fractional (e.g. 3.6) -- the leading edge then interpolates 60% of the way
+// from point 3 to point 4 instead of jumping straight to point 4, so the reveal video's line
+// actually draws itself growing forward rather than popping in one whole point at a time.
 function chartPaths(closes, x, y, w, h, visibleCount) {
   const pad = 6;
   const min = Math.min(...closes), max = Math.max(...closes);
@@ -221,8 +224,17 @@ function chartPaths(closes, x, y, w, h, visibleCount) {
     x + pad + i * stepX,
     y + pad + (h - pad * 2) * (1 - (v - min) / range)
   ]);
-  const n = Math.max(1, Math.min(allPoints.length, visibleCount ?? allPoints.length));
-  const points = allPoints.slice(0, n);
+  const maxN = allPoints.length;
+  const rawShown = Math.max(1, Math.min(maxN, visibleCount ?? maxN));
+  const fullShown = Math.floor(rawShown);
+  const growFraction = rawShown - fullShown;
+  const points = allPoints.slice(0, fullShown);
+  if (growFraction > 0 && fullShown < maxN) {
+    const p0 = points.length ? points[points.length - 1] : allPoints[0];
+    const p1 = allPoints[fullShown];
+    points.push([p0[0] + (p1[0] - p0[0]) * growFraction, p0[1] + (p1[1] - p0[1]) * growFraction]);
+  }
+  if (!points.length) points.push(allPoints[0]);
   const line = points.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
   const area = line + ` L${points[points.length - 1][0].toFixed(1)},${(y + h - pad).toFixed(1)} L${points[0][0].toFixed(1)},${(y + h - pad).toFixed(1)} Z`;
   const last = points[points.length - 1];
@@ -231,7 +243,7 @@ function chartPaths(closes, x, y, w, h, visibleCount) {
   // (see bestCall.js), never a fabricated earlier value.
   return {
     line, area, lastX: last[0], lastY: last[1], entryX: first[0], entryY: first[1], min, max,
-    fullyRevealed: n === allPoints.length
+    fullyRevealed: rawShown >= maxN
   };
 }
 
@@ -248,6 +260,10 @@ function chartPaths(closes, x, y, w, h, visibleCount) {
 // pipeline (see buildRevealFrames) to animate the chart building up one candle at a time. Slot
 // positions and the min/max scale are always computed from the FULL ohlc array regardless, so
 // candles never shift position or rescale as more of them become visible.
+// visibleCount may be fractional (e.g. 3.6) -- the most recently added candle then grows in from
+// its own vertical center outward (60% of full height, in that example) instead of popping in
+// fully formed, so each new candle in the reveal video has a real entrance instead of appearing
+// abruptly.
 function candlePaths(ohlc, x, y, w, h, entryIndex, entryPrice, visibleCount) {
   const pad = 6;
   const values = ohlc.flatMap(c => [c.high, c.low]);
@@ -259,15 +275,25 @@ function candlePaths(ohlc, x, y, w, h, entryIndex, entryPrice, visibleCount) {
   const toY = v => y + pad + (h - pad * 2) * (1 - (v - min) / range);
   const slotX = i => x + pad + slotW * (i + 0.5);
 
-  const shown = Math.max(0, Math.min(n, visibleCount ?? n));
-  const candles = ohlc.slice(0, shown).map((c, i) => {
+  const rawShown = Math.max(0, Math.min(n, visibleCount ?? n));
+  const fullShown = Math.floor(rawShown);
+  const growFraction = rawShown - fullShown;
+  const drawCount = Math.min(n, fullShown + (growFraction > 0 ? 1 : 0));
+  const candles = ohlc.slice(0, drawCount).map((c, i) => {
     const cx = slotX(i);
     const isUp = c.close >= c.open;
     const color = isUp ? COLORS.winner : COLORS.loser;
-    const bodyTop = toY(Math.max(c.open, c.close));
-    const bodyBottom = toY(Math.min(c.open, c.close));
+    let wickTop = toY(c.high), wickBottom = toY(c.low);
+    let bodyTop = toY(Math.max(c.open, c.close)), bodyBottom = toY(Math.min(c.open, c.close));
+    if (i === fullShown && growFraction > 0) {
+      const mid = (wickTop + wickBottom) / 2;
+      wickTop = mid + (wickTop - mid) * growFraction;
+      wickBottom = mid + (wickBottom - mid) * growFraction;
+      bodyTop = mid + (bodyTop - mid) * growFraction;
+      bodyBottom = mid + (bodyBottom - mid) * growFraction;
+    }
     return (
-      `<line x1="${cx.toFixed(1)}" y1="${toY(c.high).toFixed(1)}" x2="${cx.toFixed(1)}" y2="${toY(c.low).toFixed(1)}" stroke="${color}" stroke-width="2.5"/>` +
+      `<line x1="${cx.toFixed(1)}" y1="${wickTop.toFixed(1)}" x2="${cx.toFixed(1)}" y2="${wickBottom.toFixed(1)}" stroke="${color}" stroke-width="2.5"/>` +
       `<rect x="${(cx - bodyW / 2).toFixed(1)}" y="${bodyTop.toFixed(1)}" width="${bodyW.toFixed(1)}" height="${Math.max(2.5, bodyBottom - bodyTop).toFixed(1)}" rx="1.5" fill="${color}"/>`
     );
   }).join("");
@@ -277,7 +303,7 @@ function candlePaths(ohlc, x, y, w, h, entryIndex, entryPrice, visibleCount) {
   const clampedEntryIndex = Math.max(0, Math.min(n - 1, entryIndex ?? 0));
   return {
     candles, lastX, lastY, min, max, entryX: slotX(clampedEntryIndex), entryY: toY(entryPrice),
-    fullyRevealed: shown === n
+    fullyRevealed: rawShown >= n
   };
 }
 
@@ -501,6 +527,23 @@ function logoSrc() {
   return logoSrcCache;
 }
 
+// The rotating corner watermark's source image, rendered once as its own small transparent PNG
+// (same rounded-corner clip highlightSvg used to draw it in-SVG) so shortsVideo.js can hand it to
+// ffmpeg as a real file and let ffmpeg's own rotate filter spin it continuously -- see the
+// showCornerLogo note in highlightSvg for why that's the smooth-rotation fix and per-frame SVG
+// rotation wasn't. CORNER_LOGO_SIZE is exported so shortsVideo.js's overlay-position math (which
+// needs to know this image's exact pixel dimensions) can never silently drift out of sync with it.
+const CORNER_LOGO_SIZE = 112;
+async function generateCornerLogoPng() {
+  await ensureLogoSrcCached();
+  const s = CORNER_LOGO_SIZE;
+  const svg = `<svg width="${s}" height="${s}" viewBox="0 0 ${s} ${s}" xmlns="http://www.w3.org/2000/svg">
+    <clipPath id="c"><rect x="0" y="0" width="${s}" height="${s}" rx="28"/></clipPath>
+    <image href="${logoSrc()}" x="0" y="0" width="${s}" height="${s}" clip-path="url(#c)"/>
+  </svg>`;
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
+
 // Builds the SVG markup only (no rasterizing) -- split out from generateHighlightImage so the
 // reveal-video pipeline (buildRevealFrames) can render dozens of partial-content frames cheaply
 // without redoing the sharp/PNG round trip every time it just wants the markup. `reveal`, when
@@ -526,6 +569,14 @@ function highlightSvg(highlight, reveal) {
   // 0 on the static image (generateHighlightImage never passes a reveal object, so this defaults
   // to a fixed, non-spinning 0deg there -- only the frame-by-frame video actually animates it).
   const logoRotationDeg = reveal?.logoRotationDeg ?? 0;
+  // The reveal-video pipeline (buildRevealFrames) renders every content frame with this OFF and
+  // composites a continuously-rotating version itself via an ffmpeg filter (see shortsVideo.js's
+  // generateAnimatedShortVideo/generateCornerLogoPng) -- a discrete angle-per-frame rotation can
+  // only ever look stepped no matter how many frames you render, since each step is still a jump
+  // cut to a new angle. ffmpeg's rotate filter computes the angle from real elapsed time on every
+  // output frame instead, which is genuinely continuous. Only the static image (reveal undefined)
+  // still draws this in-SVG at a fixed angle.
+  const showCornerLogo = reveal?.showCornerLogo ?? true;
   const rightLogoSize = 112, rightLogoX = W - 70 - rightLogoSize, rightLogoY = 70;
   const rightLogoCx = rightLogoX + rightLogoSize / 2, rightLogoCy = rightLogoY + rightLogoSize / 2;
 
@@ -533,10 +584,12 @@ function highlightSvg(highlight, reveal) {
   <rect width="${W}" height="${H}" fill="${COLORS.surface}"/>
   <rect x="8" y="8" width="${W - 16}" height="${H - 16}" rx="36" fill="none" stroke="${COLORS.winner}" stroke-width="6" stroke-opacity="0.55"/>
 
+  ${showCornerLogo ? `
   <g transform="rotate(${logoRotationDeg.toFixed(1)} ${rightLogoCx} ${rightLogoCy})">
     <clipPath id="logoClipRight"><rect x="${rightLogoX}" y="${rightLogoY}" width="${rightLogoSize}" height="${rightLogoSize}" rx="28"/></clipPath>
     <image href="${logoSrc()}" x="${rightLogoX}" y="${rightLogoY}" width="${rightLogoSize}" height="${rightLogoSize}" clip-path="url(#logoClipRight)"/>
   </g>
+  ` : ""}
 
   ${showLogo ? `
   <clipPath id="logoClip"><rect x="70" y="80" width="64" height="64" rx="16"/></clipPath>
@@ -620,27 +673,14 @@ function* buildRevealFrames(highlight) {
   const itemCount = useCandles ? highlight.ohlc.length : highlight.closes.length;
   const showEntryMarker = highlight.badgeText === "Real Call";
 
-  // The corner logo needs to look like it's continuously spinning even through a single long
-  // "hold" (the final beat alone accounts for most of the video) -- so every pushFrames() call
-  // splits its hold into sub-frames and advances the rotation angle across ALL of them using one
-  // running clock, not one that resets per beat. Content visibility (reveal.*) stays exactly what
-  // the caller asked for across every sub-frame; only logoRotationDeg changes frame to frame.
-  // 200ms (5fps): real Railway runs showed both this pipeline AND the plain static-hold fallback
-  // stalling out well before finishing -- even the SIMPLEST possible encode struggled, meaning
-  // available CPU on the container is the real constraint. Fewer total frames (this, plus
-  // -preset ultrafast in shortsVideo.js) directly reduces how much encoding work is needed,
-  // trading some rotation smoothness back for actually finishing reliably.
-  const ROTATION_FRAME_MS = 200;
-  const ROTATION_PERIOD_MS = 3000; // one full 360deg spin every 3s
-  let clockMs = 0;
+  // The corner logo's rotation no longer lives here at all -- see the showCornerLogo note in
+  // highlightSvg and generateCornerLogoPng/shortsVideo.js's generateAnimatedShortVideo, which
+  // composite a continuously-rotating version via ffmpeg's own rotate filter after the fact. Every
+  // content frame below renders with the corner logo switched off (forced by pushFrames), so this
+  // generator only has to produce ONE frame per reveal beat instead of subdividing every hold into
+  // rotation sub-frames -- a real cut in render/encode work on top of being the actual smoothness fix.
   function* pushFrames(holdMs, reveal) {
-    const steps = Math.max(1, Math.round(holdMs / ROTATION_FRAME_MS));
-    const stepMs = holdMs / steps;
-    for (let i = 0; i < steps; i++) {
-      const logoRotationDeg = (clockMs / ROTATION_PERIOD_MS) * 360 % 360;
-      yield { svg: highlightSvg(highlight, { ...reveal, logoRotationDeg }), holdMs: stepMs };
-      clockMs += stepMs;
-    }
+    yield { svg: highlightSvg(highlight, { ...reveal, showCornerLogo: false }), holdMs };
   }
 
   const bare = { showLogo: false, showHeadline: false, showCaption: false, showCard: false, showCTA: false, showFooter: false };
@@ -671,13 +711,25 @@ function* buildRevealFrames(highlight) {
   const withPriceLine = { ...withTickerCard, showPct: true, pctFraction: 1, showPriceLine: true };
   yield* pushFrames(550, { ...withCard, card: withPriceLine });
 
+  // Each candle (or line point) gets its own mini entrance instead of popping in fully formed:
+  // chartRevealCount is fractional across CHART_GROWTH_SUBSTEPS sub-frames per step, and
+  // candlePaths/chartPaths both interpret a fractional count as "the newest one is still growing
+  // in." Grouped into chartSteps outer steps (capped regardless of real candle count) so a long
+  // OHLC history still costs a bounded number of frames -- the smoothing is free frame-count-wise
+  // now that rotation no longer multiplies every frame above.
   const chartSteps = Math.min(itemCount, MAX_CHART_STEPS);
+  const CHART_GROWTH_SUBSTEPS = 3;
+  let revealedSoFar = 0;
   for (let s = 1; s <= chartSteps; s++) {
-    const revealCount = Math.ceil((s / chartSteps) * itemCount);
-    yield* pushFrames(CHART_REVEAL_MS / chartSteps, {
-      ...withCard,
-      card: { ...withPriceLine, showChart: true, chartRevealCount: revealCount, showEntryMarker: false }
-    });
+    const target = Math.ceil((s / chartSteps) * itemCount);
+    for (let g = 1; g <= CHART_GROWTH_SUBSTEPS; g++) {
+      const revealCount = revealedSoFar + (target - revealedSoFar) * (g / CHART_GROWTH_SUBSTEPS);
+      yield* pushFrames(CHART_REVEAL_MS / chartSteps / CHART_GROWTH_SUBSTEPS, {
+        ...withCard,
+        card: { ...withPriceLine, showChart: true, chartRevealCount: revealCount, showEntryMarker: false }
+      });
+    }
+    revealedSoFar = target;
   }
 
   const elapsedBeforeFinal = 300 + 600 + 700 + 400 + 150 + 1200 + 550 + CHART_REVEAL_MS;
@@ -778,5 +830,5 @@ function buildYoutubeCaption(highlight) {
 module.exports = {
   findMover, generateShortHtml, generateShortImage, generateHighlightImage,
   buildCallHighlight, buildFallbackHighlight, buildYoutubeCaption, DISCORD_INVITE_URL,
-  buildRevealFrames, generateRevealFramePngs
+  buildRevealFrames, generateRevealFramePngs, generateCornerLogoPng, CORNER_LOGO_SIZE
 };

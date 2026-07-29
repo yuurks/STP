@@ -14,17 +14,17 @@ const path = require("path");
 const crypto = require("crypto");
 const { execFile } = require("child_process");
 const ffmpegPath = require("ffmpeg-static");
+const { generateCornerLogoPng, CORNER_LOGO_SIZE } = require("./shorts");
 
 const DEFAULT_DURATION_SECONDS = 15; // matches shorts.js's REVEAL_VIDEO_MS -- this is only the fallback path if the animated reveal pipeline fails, but should still be the same length
 
-// "-preset ultrafast" on every libx264 encode below: a real Railway run showed both this simple
-// static-hold encode AND the more complex animated one stalling out at single-digit frame counts
-// (speed=0.258x -- painfully slow) even with threads already capped at 2, meaning the container's
-// available CPU is the real constraint, not a code bug to keep chasing with more parameter tweaks.
-// x264's presets trade encoding CPU time for compression efficiency, not visual quality/resolution
-// -- "ultrafast" costs some file size (still tiny for this content: a mostly-static UI card, not
-// fast-motion video) in exchange for dramatically less CPU work per frame, which is exactly the
-// trade this workload needs on constrained/shared hardware.
+// A real Railway run once showed both encoders stalling at single-digit frame counts under
+// "-preset ultrafast" (speed=0.258x) with threads already capped at 2 -- the container's available
+// CPU, not a code bug. "-preset veryfast" + "-crf 18" is the current tradeoff: noticeably sharper
+// output (this content is flat-color UI/text, which compresses cheaply even at low CRF) for only a
+// modest step up in encode time from ultrafast -- and if it ever stalls anyway, the animated path
+// already falls back to this static-hold encode, and this one still has the 30s default timeout as
+// a hard ceiling, so a slow encode degrades gracefully rather than hanging the bot.
 
 function run(args, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
@@ -58,7 +58,8 @@ async function generateShortVideo(pngBuffer, durationSeconds = DEFAULT_DURATION_
       "-vf", "format=yuv420p",
       "-c:v", "libx264",
       "-threads", "2",
-      "-preset", "ultrafast",
+      "-preset", "veryfast",
+      "-crf", "18",
       "-pix_fmt", "yuv420p",
       "-movflags", "+faststart",
       outputPath
@@ -98,6 +99,20 @@ function resolveMusicPath() {
   return path.join(MUSIC_DIR, pick);
 }
 
+// Where shorts.js's highlightSvg draws the corner logo's rotation pivot -- kept in exact sync
+// with those constants (W=1080, rightLogoX = W-70-112, rightLogoY = 70) since this overlay has to
+// land on the same spot the SVG used to draw it in-place.
+const CARD_WIDTH = 1080;
+const LOGO_X = CARD_WIDTH - 70 - CORNER_LOGO_SIZE, LOGO_Y = 70;
+const LOGO_CENTER_X = LOGO_X + CORNER_LOGO_SIZE / 2, LOGO_CENTER_Y = LOGO_Y + CORNER_LOGO_SIZE / 2;
+// A square rotated about its center needs a canvas this big (its own diagonal) to show every
+// corner at every angle without clipping -- ffmpeg's rotate filter fills the rest with fillcolor
+// (here "none", i.e. transparent) rather than cropping.
+const ROTATED_CANVAS = Math.ceil(CORNER_LOGO_SIZE * Math.SQRT2);
+const OVERLAY_X = Math.round(LOGO_CENTER_X - ROTATED_CANVAS / 2);
+const OVERLAY_Y = Math.round(LOGO_CENTER_Y - ROTATED_CANVAS / 2);
+const LOGO_ROTATION_PERIOD_SEC = 3; // one full 360deg spin every 3s -- matches the old per-frame rotation's rate
+
 // Turns shorts.js's buildRevealFrames/generateRevealFramePngs output (an ordered list of real
 // rendered PNG frames, each with how long to hold it) into a real animated MP4, via ffmpeg's
 // concat demuxer -- each image gets its own on-screen duration rather than a fixed per-frame
@@ -105,6 +120,13 @@ function resolveMusicPath() {
 // ones (the final CTA hold) both possible from the same mechanism. The last file has to be listed
 // a second time with no duration line after it -- a well-known concat-demuxer quirk where the
 // final entry's duration is otherwise silently dropped; confirmed necessary, not just caution.
+//
+// The corner logo is NOT part of any content frame above (see shorts.js's showCornerLogo) --
+// instead it's composited here as its own input, spun continuously by ffmpeg's rotate filter
+// (angle driven by real elapsed time `t`, not a value we pre-computed per frame) and layered on
+// via overlay. That's what makes the rotation genuinely smooth rather than a series of jump cuts
+// to a new angle every N milliseconds, which is all a per-frame approach could ever produce no
+// matter how many frames it spent on it.
 async function generateAnimatedShortVideo(frames) {
   if (!frames.length) throw new Error("generateAnimatedShortVideo needs at least one frame");
 
@@ -112,6 +134,7 @@ async function generateAnimatedShortVideo(frames) {
   const frameDir = path.join(os.tmpdir(), `stp-reveal-${tmpId}`);
   fs.mkdirSync(frameDir, { recursive: true });
   const listPath = path.join(frameDir, "list.txt");
+  const logoPath = path.join(frameDir, "corner-logo.png");
   const outputPath = path.join(os.tmpdir(), `stp-reveal-${tmpId}.mp4`);
   const musicPath = resolveMusicPath();
 
@@ -121,6 +144,7 @@ async function generateAnimatedShortVideo(frames) {
       fs.writeFileSync(p, frame.png);
       return p;
     });
+    fs.writeFileSync(logoPath, await generateCornerLogoPng());
 
     const listLines = [];
     frames.forEach((frame, i) => {
@@ -132,38 +156,61 @@ async function generateAnimatedShortVideo(frames) {
     listLines.push(`file '${framePaths[framePaths.length - 1].replace(/\\/g, "/")}'`);
     fs.writeFileSync(listPath, listLines.join("\n"));
 
+    // Total on-screen duration, computed directly from the frame holds rather than left to ffmpeg
+    // to infer -- confirmed by a real local run that "-shortest" alone does NOT reliably bound
+    // this once the logo overlay (an infinite "-loop 1" input) is in the filter graph: the encode
+    // just kept going past 15 real MINUTES of output before the exec timeout killed it, instead of
+    // stopping at the content video's true ~15s length. An explicit "-t" on the output is a hard,
+    // unambiguous cap that doesn't depend on how overlay/filter_complex propagates EOF between a
+    // finite main input and an infinite secondary one.
+    const totalDurationSec = frames.reduce((sum, f) => sum + f.holdMs, 0) / 1000;
+
+    // Input order: 0 = content frames (finite duration, sets the real video length), 1 = music
+    // (only if present; -stream_loop -1 makes it infinite), last = the looped logo still (also
+    // infinite -- "-loop 1" repeats a single image forever).
     const args = [
       "-y",
       "-f", "concat",
       "-safe", "0",
       "-i", listPath
     ];
+    let audioInputIndex = null;
     if (musicPath) {
-      // -stream_loop -1 repeats the track indefinitely so a short loop still covers the full
-      // video regardless of its own length, and -shortest then cuts the OUTPUT to the video's
-      // real length (fixed by the image sequence above) rather than the now-infinite audio.
       args.push("-stream_loop", "-1", "-i", musicPath);
+      audioInputIndex = 1;
     }
+    const logoInputIndex = musicPath ? 2 : 1;
+    args.push("-loop", "1", "-i", logoPath);
+
+    // [0:v]fps=30 first, BEFORE overlay: a real local run showed that feeding the concat stream's
+    // irregular per-frame durations (some as short as ~20ms, the final hold ~9s) straight into
+    // overlay against the logo's own steady clock made overlay's frame-sync stop early -- it
+    // simply never advanced far enough to reach the long final hold, truncating a 15s video to
+    // ~5.7s. Converting the main stream to genuine constant-frame-rate first (duplicating the long
+    // hold into real repeated frames, exactly what "fps" is for) fixed it outright -- confirmed by
+    // re-running the same list.txt both ways and diffing the output duration.
+    const filterComplex =
+      `[0:v]fps=30[mainv];` +
+      `[${logoInputIndex}:v]format=rgba,rotate=a='2*PI*t/${LOGO_ROTATION_PERIOD_SEC}':fillcolor=none:ow=${ROTATED_CANVAS}:oh=${ROTATED_CANVAS}[rotlogo];` +
+      `[mainv][rotlogo]overlay=${OVERLAY_X}:${OVERLAY_Y}:format=auto,format=yuv420p[vout]`;
+
+    args.push("-filter_complex", filterComplex, "-map", "[vout]");
+    if (musicPath) args.push("-map", `${audioInputIndex}:a`);
     args.push(
-      "-map", "0:v",
-      "-vf", "format=yuv420p",
-      "-r", "30",
-      "-vsync", "cfr",
       "-c:v", "libx264",
       "-threads", "2",
-      "-preset", "ultrafast",
+      "-preset", "veryfast",
+      "-crf", "18",
       "-pix_fmt", "yuv420p"
     );
-    if (musicPath) {
-      args.push("-map", "1:a", "-c:a", "aac", "-b:a", "128k", "-shortest");
-    }
-    args.push("-movflags", "+faststart", outputPath);
+    if (musicPath) args.push("-c:a", "aac", "-b:a", "128k");
+    args.push("-t", totalDurationSec.toFixed(3), "-shortest", "-movflags", "+faststart", outputPath);
 
     // 60s wasn't enough headroom on Railway's actual hardware -- a real run there showed ffmpeg
     // genuinely encoding (climbing frame count, real bitrate), not stuck, just slower than on a
-    // dev machine once you add more frames (10fps logo rotation) and music mixing on a 2-thread
-    // cap. 3 minutes gives real margin without masking an actual hang (which still shows up as
-    // the same fallback-to-static-hold behavior, just after waiting longer first).
+    // dev machine once more frames and music mixing are added on a 2-thread cap. 3 minutes gives
+    // real margin without masking an actual hang (which still shows up as the same
+    // fallback-to-static-hold behavior, just after waiting longer first).
     await run(args, 180000);
     return fs.readFileSync(outputPath);
   } finally {

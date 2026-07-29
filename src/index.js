@@ -1,7 +1,7 @@
 require("dotenv").config();
 const {
   Client, GatewayIntentBits, Events, AttachmentBuilder, PermissionFlagsBits,
-  ButtonBuilder, ButtonStyle, ActionRowBuilder
+  ButtonBuilder, ButtonStyle, ActionRowBuilder, EmbedBuilder
 } = require("discord.js");
 
 const {
@@ -320,7 +320,28 @@ async function postShortsHighlight(highlight, channel) {
     }
 
     if (youtubeResult) {
-      await channel.send(`Posted to YouTube: ${youtubeResult.url}`);
+      // A bare link here would let Discord auto-unfurl it, but that unfurl goes through YouTube's
+      // oEmbed endpoint, which still reports a standard 16:9 box for /shorts/ URLs -- Discord just
+      // renders whatever aspect ratio oEmbed hands it, so the preview comes out "extra wide"
+      // regardless of the video underneath actually being vertical. Building our own embed sidesteps
+      // that entirely: setImage on the same vertical card PNG already generated above forces Discord
+      // to size the preview to ITS real (tall) aspect ratio, and setURL keeps it clicking through to
+      // the real YouTube Short.
+      const youtubeThumbFile = new AttachmentBuilder(png, { name: "stp-short-thumb.png" });
+      const watchButton = new ButtonBuilder()
+        .setLabel("Watch on YouTube")
+        .setStyle(ButtonStyle.Link)
+        .setURL(youtubeResult.url);
+      const youtubeEmbed = new EmbedBuilder()
+        .setTitle("Posted to YouTube")
+        .setURL(youtubeResult.url)
+        .setImage(`attachment://stp-short-thumb.png`)
+        .setColor(0xff0000);
+      await channel.send({
+        embeds: [youtubeEmbed],
+        files: [youtubeThumbFile],
+        components: [new ActionRowBuilder().addComponents(watchButton)]
+      });
     } else {
       const videoFile = new AttachmentBuilder(mp4, { name: "stp-short.mp4" });
       await channel.send({
