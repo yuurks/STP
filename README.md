@@ -94,6 +94,12 @@ bot tracks this and falls back to the manual-file path once hit), and YouTube ha
 stricter about flagging fully-automated, no-review channels as low-value/spam content — this
 posts publicly with no human check in between.
 
+**Background music**: the video is silent by default -- there's no way to attach a track from
+YouTube's own Shorts Creator music library through the API (that picker only exists inside the
+mobile app, not via any upload API, for anyone). To add real background music, drop a properly
+licensed audio file at `assets/music/background.mp3` (or point `SHORTS_MUSIC_PATH` at wherever
+you keep it) -- it gets looped and mixed in automatically, no code changes needed.
+
 ### 6. Run it
 
 ```bash

@@ -547,7 +547,7 @@ async function generateHighlightImage(highlight) {
 
 // Total video length -- matches shortsVideo.js's old static-hold default, so the reveal video
 // replacing it isn't a surprising length change on its own.
-const REVEAL_VIDEO_MS = 8000;
+const REVEAL_VIDEO_MS = 15000;
 const CHART_REVEAL_MS = 1400;
 const MAX_CHART_STEPS = 24; // caps frame count (and render/encode time) regardless of candle count
 

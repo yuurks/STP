@@ -15,7 +15,7 @@ const crypto = require("crypto");
 const { execFile } = require("child_process");
 const ffmpegPath = require("ffmpeg-static");
 
-const DEFAULT_DURATION_SECONDS = 8;
+const DEFAULT_DURATION_SECONDS = 15; // matches shorts.js's REVEAL_VIDEO_MS -- this is only the fallback path if the animated reveal pipeline fails, but should still be the same length
 
 function run(args, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
@@ -59,6 +59,19 @@ async function generateShortVideo(pngBuffer, durationSeconds = DEFAULT_DURATION_
   }
 }
 
+// A real audio file to lay under the reveal video, if one exists -- checked at call time, not
+// import time, so dropping a file in later (or swapping it) never needs a restart to take effect.
+// YouTube's own Shorts Creator music library (the "saved songs" picker) is a mobile in-app-only
+// feature with no API access at all -- there is no way to attach a track from it through the
+// upload API this bot uses, for any bot, regardless of how it's built. This is the actual
+// alternative: a real audio file, licensed for this use, mixed into the video file itself before
+// upload. Overridable via SHORTS_MUSIC_PATH for swapping tracks without a code change.
+const DEFAULT_MUSIC_PATH = path.join(__dirname, "..", "..", "assets", "music", "background.mp3");
+function resolveMusicPath() {
+  const musicPath = process.env.SHORTS_MUSIC_PATH || DEFAULT_MUSIC_PATH;
+  return fs.existsSync(musicPath) ? musicPath : null;
+}
+
 // Turns shorts.js's buildRevealFrames/generateRevealFramePngs output (an ordered list of real
 // rendered PNG frames, each with how long to hold it) into a real animated MP4, via ffmpeg's
 // concat demuxer -- each image gets its own on-screen duration rather than a fixed per-frame
@@ -74,6 +87,7 @@ async function generateAnimatedShortVideo(frames) {
   fs.mkdirSync(frameDir, { recursive: true });
   const listPath = path.join(frameDir, "list.txt");
   const outputPath = path.join(os.tmpdir(), `stp-reveal-${tmpId}.mp4`);
+  const musicPath = resolveMusicPath();
 
   try {
     const framePaths = frames.map((frame, i) => {
@@ -92,19 +106,32 @@ async function generateAnimatedShortVideo(frames) {
     listLines.push(`file '${framePaths[framePaths.length - 1].replace(/\\/g, "/")}'`);
     fs.writeFileSync(listPath, listLines.join("\n"));
 
-    await run([
+    const args = [
       "-y",
       "-f", "concat",
       "-safe", "0",
-      "-i", listPath,
+      "-i", listPath
+    ];
+    if (musicPath) {
+      // -stream_loop -1 repeats the track indefinitely so a short loop still covers the full
+      // video regardless of its own length, and -shortest then cuts the OUTPUT to the video's
+      // real length (fixed by the image sequence above) rather than the now-infinite audio.
+      args.push("-stream_loop", "-1", "-i", musicPath);
+    }
+    args.push(
+      "-map", "0:v",
       "-vf", "format=yuv420p",
       "-r", "30",
       "-vsync", "cfr",
       "-c:v", "libx264",
-      "-pix_fmt", "yuv420p",
-      "-movflags", "+faststart",
-      outputPath
-    ], 60000);
+      "-pix_fmt", "yuv420p"
+    );
+    if (musicPath) {
+      args.push("-map", "1:a", "-c:a", "aac", "-b:a", "128k", "-shortest");
+    }
+    args.push("-movflags", "+faststart", outputPath);
+
+    await run(args, 60000);
     return fs.readFileSync(outputPath);
   } finally {
     fs.rm(frameDir, { recursive: true, force: true }, () => {});
