@@ -3,4 +3,5 @@ node_modules/
 data/watchlists.json
 data/movers.json
 data/movers-short.html
+data/youtube-quota.json
 .claude/settings.local.json

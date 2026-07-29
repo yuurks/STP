@@ -18,6 +18,7 @@ const { findBreakoutCandidates } = require("./lib/breakout");
 const { fetchTokenTradingData } = require("./lib/dexscreener");
 const { findBestCall } = require("./lib/bestCall");
 const { generateShortVideo, generateAnimatedShortVideo } = require("./lib/shortsVideo");
+const { uploadShort } = require("./lib/youtubeUpload");
 const { resolveChannelId, fetchLatestVideo } = require("./lib/youtubeWatch");
 const {
   scanEmbed, alertEmbed, discoverEmbed, degenEmbed, degenClosestEmbed, volatilityEmbed, backtestEmbed,
@@ -299,12 +300,30 @@ async function postShortsHighlight(highlight, channel) {
       console.error(`Shorts reveal-video generation failed, falling back to static hold: ${err.message}`);
       mp4 = await generateShortVideo(png);
     }
-    const videoFile = new AttachmentBuilder(mp4, { name: "stp-short.mp4" });
     const { title, description } = shorts.buildYoutubeCaption(highlight);
-    await channel.send({
-      content: `Video file for this Short -- download and upload to YouTube.\n\n**Title:**\n\`\`\`${title}\`\`\`\n**Description:**\n\`\`\`${description}\`\`\``,
-      files: [videoFile]
-    });
+
+    // Fully automated upload -- posts straight to the real YouTube channel these credentials are
+    // authorized for, no manual download/upload step. Only reachable at all once someone has
+    // completed the one-time OAuth consent (see scripts/youtube-authorize.js); until then
+    // uploadShort always throws "not configured", caught here the same as any other failure
+    // reason (quota exhausted, a real API error), and this falls back to handing the file over
+    // for manual upload instead -- a working video always reaches Discord either way.
+    let youtubeResult = null;
+    try {
+      youtubeResult = await uploadShort({ videoBuffer: mp4, title, description });
+    } catch (err) {
+      console.error(`YouTube upload skipped: ${err.message}`);
+    }
+
+    if (youtubeResult) {
+      await channel.send(`Posted to YouTube: ${youtubeResult.url}`);
+    } else {
+      const videoFile = new AttachmentBuilder(mp4, { name: "stp-short.mp4" });
+      await channel.send({
+        content: `Video file for this Short -- download and upload to YouTube.\n\n**Title:**\n\`\`\`${title}\`\`\`\n**Description:**\n\`\`\`${description}\`\`\``,
+        files: [videoFile]
+      });
+    }
   } catch (err) {
     console.error(`Shorts video generation failed: ${err.message}`);
   }

@@ -72,13 +72,35 @@ npm run set-avatar
 This only needs to run once (Discord rate-limits how often an avatar can change). Swap
 `assets/logo.png` for your own image any time and re-run it to update.
 
-### 5. Run it
+### 5. (Optional) Set up automatic YouTube uploads for /shorts
+
+Without this, `/shorts` still works fully — it renders the image and an animated video and hands
+the video file to you to upload by hand. To skip that manual step and have it post straight to a
+real YouTube channel:
+
+```bash
+npm run youtube-authorize
+```
+
+This is a one-time setup that can't be skipped or automated further — Google requires the
+channel owner to explicitly grant upload access before any unattended upload can happen. The
+script prints the exact steps (a Google Cloud project, enabling the YouTube Data API, an OAuth
+client) and walks you through the one-time consent. Save the three values it asks for
+(`YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REFRESH_TOKEN`) into `.env` and into your
+host's environment variables.
+
+Worth knowing before turning this on: YouTube's API has a default quota of 6 uploads/day (the
+bot tracks this and falls back to the manual-file path once hit), and YouTube has gotten
+stricter about flagging fully-automated, no-review channels as low-value/spam content — this
+posts publicly with no human check in between.
+
+### 6. Run it
 
 ```bash
 npm start
 ```
 
-### 6. (Optional) Run the test suite
+### 7. (Optional) Run the test suite
 
 ```bash
 npm test
