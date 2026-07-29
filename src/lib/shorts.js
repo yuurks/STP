@@ -91,6 +91,21 @@ async function findMover(universeKind, sampleSize) {
     try {
       const bars = await fetchIntradaySeries(entry.symbol, "15min", INTRADAY_BAR_COUNT);
       entry.intraday = { times: bars.map(b => b.time), closes: bars.map(b => b.close) };
+      // Recompute pctChange/price from this SAME intraday series rather than leaving the
+      // daily-close pctChange from the cheap scan above -- that daily figure (yesterday's close
+      // vs the day before) has no relationship to the Open/Now prices buildFallbackHighlight
+      // actually displays (this series' first/last close), and for a thinly-traded symbol where
+      // the intraday window has to reach back multiple days (see formatSessionLabel), the two can
+      // straightforwardly disagree -- confirmed via a real posted card: "$0.00142 -> $0.00134
+      // (+0.8%)", a price DECREASE labeled as a gain. Whatever ends up on the card must always be
+      // internally consistent with itself, even if it now differs slightly from the number that
+      // originally ranked this candidate as the day's winner in the scan above.
+      if (entry.intraday.closes.length >= 2) {
+        const openPrice = entry.intraday.closes[0];
+        const nowPrice = entry.intraday.closes[entry.intraday.closes.length - 1];
+        entry.pctChange = ((nowPrice - openPrice) / openPrice) * 100;
+        entry.price = nowPrice;
+      }
     } catch (err) {
       console.error(`Shorts intraday fetch failed for ${entry.symbol}: ${err.message}`);
     }
