@@ -255,7 +255,11 @@ async function runAlertHistory(channel, eligible, embedFn = alertHistoryEmbed) {
 // The scheduled Shorts drop samples a much smaller slice than /watch autobuild (300) --
 // it runs twice a day automatically, so a smaller number keeps the combined daily cost from
 // eating into the quota the rest of the bot's features (autoscan, alerts, etc.) depend on.
-const SHORTS_SAMPLE_SIZE = 100;
+// Also only ever reached as a fallback now (findBestCall's real-call path is tried first, see
+// runShortsDrop) -- 100 candidates at Twelve Data's required 7.5s pacing was a genuine ~13min
+// wait for what's meant to be the exception case, not the common one. 30 still samples a
+// meaningful slice of the ~210-entry smallcap universe in well under 4 minutes.
+const SHORTS_SAMPLE_SIZE = 30;
 // Crypto only, and skewed toward smaller-cap coins -- see universe.js's SMALLCAP_RANK_CUTOFF
 // and shorts.js's volume-surge filter for how "small cap, real volume interest" is approximated.
 const SHORTS_UNIVERSE = "crypto-smallcap";
