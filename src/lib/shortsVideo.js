@@ -30,7 +30,12 @@ function run(args, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
     execFile(ffmpegPath, args, { timeout: timeoutMs }, (err, stdout, stderr) => {
       if (err) {
-        reject(new Error(`${err.message}\n${stderr}`));
+        // err.message alone doesn't say WHY the process ended -- err.signal is what actually
+        // distinguishes "OOM-killed" (SIGKILL, no ffmpeg error text at all, just silence after the
+        // last progress line) from "ffmpeg exited with its own real error" (err.code, usually with
+        // explanatory stderr right above it). A real Railway run once died silently mid-encode with
+        // no clue why, purely because this was being swallowed.
+        reject(new Error(`${err.message} (code=${err.code}, signal=${err.signal})\n${stderr}`));
       } else {
         resolve();
       }
@@ -189,8 +194,14 @@ async function generateAnimatedShortVideo(frames) {
     // ~5.7s. Converting the main stream to genuine constant-frame-rate first (duplicating the long
     // hold into real repeated frames, exactly what "fps" is for) fixed it outright -- confirmed by
     // re-running the same list.txt both ways and diffing the output duration.
+    // format=yuv420p on [0:v] BEFORE fps/overlay, not after: our source PNGs decode as RGBA (4
+    // bytes/pixel), and leaving that alone through both fps's rate-conversion (which has to hold/
+    // duplicate whole 1080x1920 frames) and overlay's compositing nearly triples the per-frame
+    // memory those stages juggle vs converting to yuv420p (~1.5 bytes/pixel) right after decode,
+    // same as the old pre-overlay pipeline did. Only the small rotating logo layer actually needs
+    // alpha (for its rounded corners' transparency); the background layer never did.
     const filterComplex =
-      `[0:v]fps=30[mainv];` +
+      `[0:v]format=yuv420p,fps=30[mainv];` +
       `[${logoInputIndex}:v]format=rgba,rotate=a='2*PI*t/${LOGO_ROTATION_PERIOD_SEC}':fillcolor=none:ow=${ROTATED_CANVAS}:oh=${ROTATED_CANVAS}[rotlogo];` +
       `[mainv][rotlogo]overlay=${OVERLAY_X}:${OVERLAY_Y}:format=auto,format=yuv420p[vout]`;
 
