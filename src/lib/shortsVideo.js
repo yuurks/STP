@@ -48,6 +48,7 @@ async function generateShortVideo(pngBuffer, durationSeconds = DEFAULT_DURATION_
       "-r", "30",
       "-vf", "format=yuv420p",
       "-c:v", "libx264",
+      "-threads", "2",
       "-pix_fmt", "yuv420p",
       "-movflags", "+faststart",
       outputPath
@@ -139,6 +140,7 @@ async function generateAnimatedShortVideo(frames) {
       "-r", "30",
       "-vsync", "cfr",
       "-c:v", "libx264",
+      "-threads", "2",
       "-pix_fmt", "yuv420p"
     );
     if (musicPath) {
