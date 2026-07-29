@@ -22,7 +22,9 @@
 // (for the real deployed bot). Only needs to run again if that token is ever revoked.
 require("dotenv").config();
 const http = require("http");
-const { google } = require("googleapis");
+// Scoped to just what OAuth needs instead of the full `googleapis` package -- see the comment in
+// src/lib/youtubeUpload.js for why (203MB vs. under 1MB for the same functionality here).
+const { OAuth2Client } = require("google-auth-library");
 
 const PORT = 53682;
 const REDIRECT_URI = `http://localhost:${PORT}/oauth2callback`;
@@ -36,7 +38,7 @@ if (!YOUTUBE_CLIENT_ID || !YOUTUBE_CLIENT_SECRET) {
   process.exit(1);
 }
 
-const oauth2Client = new google.auth.OAuth2(YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, REDIRECT_URI);
+const oauth2Client = new OAuth2Client(YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, REDIRECT_URI);
 
 const authUrl = oauth2Client.generateAuthUrl({
   access_type: "offline", // required to get a refresh_token back, not just a short-lived access token

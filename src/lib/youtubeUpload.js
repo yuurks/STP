@@ -6,7 +6,15 @@
 // YOUTUBE_CLIENT_SECRET/YOUTUBE_REFRESH_TOKEN are set, everything after that is unattended.
 const fs = require("fs");
 const path = require("path");
-const { google } = require("googleapis");
+// Scoped to just the YouTube client instead of the full `googleapis` package -- that package
+// bundles generated client code for every Google API (hundreds of them) and was confirmed to be
+// 203MB on its own, which is what actually pushed this bot's Railway deployment out of disk space
+// and silently broke both the reveal-video pipeline and this upload step (both fell back to their
+// old behavior exactly as designed, which is why the failure wasn't obvious from Discord alone).
+// @googleapis/youtube + google-auth-library together are under 3MB and provide the exact same
+// OAuth2Client/videos.insert functionality this file actually uses.
+const { youtube } = require("@googleapis/youtube");
+const { OAuth2Client } = require("google-auth-library");
 const { Readable } = require("stream");
 
 // YouTube Data API's default daily quota is 10,000 units; videos.insert costs 1,600 -- so 6
@@ -50,7 +58,7 @@ function recordUpload() {
 function getOAuthClient() {
   const { YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, YOUTUBE_REFRESH_TOKEN } = process.env;
   if (!YOUTUBE_CLIENT_ID || !YOUTUBE_CLIENT_SECRET || !YOUTUBE_REFRESH_TOKEN) return null;
-  const client = new google.auth.OAuth2(YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET);
+  const client = new OAuth2Client(YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET);
   client.setCredentials({ refresh_token: YOUTUBE_REFRESH_TOKEN });
   return client;
 }
@@ -71,8 +79,8 @@ async function uploadShort({ videoBuffer, title, description }) {
     throw new Error(`YouTube daily upload quota reached (${MAX_UPLOADS_PER_DAY}/day) -- resets at UTC midnight`);
   }
 
-  const youtube = google.youtube({ version: "v3", auth });
-  const res = await youtube.videos.insert({
+  const yt = youtube({ version: "v3", auth });
+  const res = await yt.videos.insert({
     part: ["snippet", "status"],
     requestBody: {
       snippet: { title, description, categoryId: CATEGORY_ID },
