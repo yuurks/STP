@@ -603,7 +603,9 @@ function buildRevealFrames(highlight) {
   // advances the rotation angle across ALL of them using one running clock, not one that resets
   // per beat. Content visibility (reveal.*) stays exactly what the caller asked for across every
   // sub-frame; only logoRotationDeg changes frame to frame.
-  const ROTATION_FRAME_MS = 250;
+  const ROTATION_FRAME_MS = 100; // 10fps -- was 250ms (4fps, visibly steppy) while ffmpeg's hang
+  // bug was the real bottleneck; that's fixed now, so smoothness no longer needs to be traded for
+  // render speed to the same degree.
   const ROTATION_PERIOD_MS = 3000; // one full 360deg spin every 3s
   let clockMs = 0;
   const push = (holdMs, reveal) => {
