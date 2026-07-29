@@ -59,17 +59,32 @@ async function generateShortVideo(pngBuffer, durationSeconds = DEFAULT_DURATION_
   }
 }
 
-// A real audio file to lay under the reveal video, if one exists -- checked at call time, not
-// import time, so dropping a file in later (or swapping it) never needs a restart to take effect.
-// YouTube's own Shorts Creator music library (the "saved songs" picker) is a mobile in-app-only
-// feature with no API access at all -- there is no way to attach a track from it through the
-// upload API this bot uses, for any bot, regardless of how it's built. This is the actual
-// alternative: a real audio file, licensed for this use, mixed into the video file itself before
-// upload. Overridable via SHORTS_MUSIC_PATH for swapping tracks without a code change.
-const DEFAULT_MUSIC_PATH = path.join(__dirname, "..", "..", "assets", "music", "background.mp3");
+// Picks a random real audio file to lay under the reveal video, if any exist -- checked at call
+// time, not import time, so dropping files in later (or adding/removing tracks) never needs a
+// restart to take effect. YouTube's own Shorts Creator music library (the "saved songs" picker)
+// is a mobile in-app-only feature with no API access at all -- there is no way to attach a track
+// from it through the upload API this bot uses, for any bot, regardless of how it's built. This
+// is the actual alternative: real audio files, licensed for this use, mixed into the video file
+// itself before upload. Random rather than fixed/rotating-in-order so repeated /shorts posts in
+// the same short window don't all sound identical purely by coincidence of upload order.
+const MUSIC_DIR = path.join(__dirname, "..", "..", "assets", "music");
+const AUDIO_EXTENSIONS = new Set([".mp3", ".m4a", ".wav", ".aac", ".ogg"]);
+
 function resolveMusicPath() {
-  const musicPath = process.env.SHORTS_MUSIC_PATH || DEFAULT_MUSIC_PATH;
-  return fs.existsSync(musicPath) ? musicPath : null;
+  // SHORTS_MUSIC_PATH still wins outright if set -- an explicit single-file override, for anyone
+  // who wants exactly one fixed track rather than the pool.
+  if (process.env.SHORTS_MUSIC_PATH) {
+    return fs.existsSync(process.env.SHORTS_MUSIC_PATH) ? process.env.SHORTS_MUSIC_PATH : null;
+  }
+  let files;
+  try {
+    files = fs.readdirSync(MUSIC_DIR).filter(f => AUDIO_EXTENSIONS.has(path.extname(f).toLowerCase()));
+  } catch {
+    return null; // assets/music/ doesn't exist yet -- no tracks provided, stays silent
+  }
+  if (!files.length) return null;
+  const pick = files[Math.floor(Math.random() * files.length)];
+  return path.join(MUSIC_DIR, pick);
 }
 
 // Turns shorts.js's buildRevealFrames/generateRevealFramePngs output (an ordered list of real
