@@ -17,7 +17,7 @@ const { findDegenCandidates } = degen;
 const { findBreakoutCandidates } = require("./lib/breakout");
 const { fetchTokenTradingData } = require("./lib/dexscreener");
 const { findBestCall } = require("./lib/bestCall");
-const { generateShortVideo } = require("./lib/shortsVideo");
+const { generateShortVideo, generateAnimatedShortVideo } = require("./lib/shortsVideo");
 const { resolveChannelId, fetchLatestVideo } = require("./lib/youtubeWatch");
 const {
   scanEmbed, alertEmbed, discoverEmbed, degenEmbed, degenClosestEmbed, volatilityEmbed, backtestEmbed,
@@ -280,13 +280,25 @@ async function postShortsHighlight(highlight, channel) {
   await channel.send({ embeds: [highlightEmbed(highlight, filename)], files: [file], components: [row] });
 
   // Additive only -- the image above is the real /shorts post and always goes out regardless of
-  // what happens here. This just also hands over a ready-to-upload vertical MP4 (ffmpeg turning
-  // the same PNG into a silent static-hold video) so posting to YouTube Shorts doesn't require
-  // screen-recording the Discord message by hand. A failure here (e.g. ffmpeg missing/erroring in
-  // some future environment) is logged and swallowed, never allowed to look like the /shorts drop
-  // itself failed.
+  // what happens here. This just also hands over a ready-to-upload vertical MP4 so posting to
+  // YouTube Shorts doesn't require screen-recording the Discord message by hand. A failure here
+  // (e.g. ffmpeg missing/erroring in some future environment) is logged and swallowed, never
+  // allowed to look like the /shorts drop itself failed.
   try {
-    const mp4 = await generateShortVideo(png);
+    let mp4;
+    try {
+      // Animated reveal: logo -> headline -> card -> ticker -> percentage counting up -> price
+      // line -> chart building in candle-by-candle (or point-by-point) -> entry marker -> CTA.
+      // Every frame comes from the exact same SVG/candle-drawing functions the static image
+      // uses (see shorts.js's buildRevealFrames), so it's never a re-approximation of the chart.
+      const frames = await shorts.generateRevealFramePngs(highlight);
+      mp4 = await generateAnimatedShortVideo(frames);
+    } catch (err) {
+      // Falls back to the old plain static-hold video rather than skipping the video entirely --
+      // a real, if less interesting, upload beats none if the animated pipeline ever has a bad day.
+      console.error(`Shorts reveal-video generation failed, falling back to static hold: ${err.message}`);
+      mp4 = await generateShortVideo(png);
+    }
     const videoFile = new AttachmentBuilder(mp4, { name: "stp-short.mp4" });
     const { title, description } = shorts.buildYoutubeCaption(highlight);
     await channel.send({

@@ -17,9 +17,9 @@ const ffmpegPath = require("ffmpeg-static");
 
 const DEFAULT_DURATION_SECONDS = 8;
 
-function run(args) {
+function run(args, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
-    execFile(ffmpegPath, args, { timeout: 30000 }, (err, stdout, stderr) => {
+    execFile(ffmpegPath, args, { timeout: timeoutMs }, (err, stdout, stderr) => {
       if (err) {
         reject(new Error(`${err.message}\n${stderr}`));
       } else {
@@ -59,4 +59,57 @@ async function generateShortVideo(pngBuffer, durationSeconds = DEFAULT_DURATION_
   }
 }
 
-module.exports = { generateShortVideo };
+// Turns shorts.js's buildRevealFrames/generateRevealFramePngs output (an ordered list of real
+// rendered PNG frames, each with how long to hold it) into a real animated MP4, via ffmpeg's
+// concat demuxer -- each image gets its own on-screen duration rather than a fixed per-frame
+// hold, which is what makes fast beats (the percentage count-up, each candle popping in) and slow
+// ones (the final CTA hold) both possible from the same mechanism. The last file has to be listed
+// a second time with no duration line after it -- a well-known concat-demuxer quirk where the
+// final entry's duration is otherwise silently dropped; confirmed necessary, not just caution.
+async function generateAnimatedShortVideo(frames) {
+  if (!frames.length) throw new Error("generateAnimatedShortVideo needs at least one frame");
+
+  const tmpId = crypto.randomBytes(8).toString("hex");
+  const frameDir = path.join(os.tmpdir(), `stp-reveal-${tmpId}`);
+  fs.mkdirSync(frameDir, { recursive: true });
+  const listPath = path.join(frameDir, "list.txt");
+  const outputPath = path.join(os.tmpdir(), `stp-reveal-${tmpId}.mp4`);
+
+  try {
+    const framePaths = frames.map((frame, i) => {
+      const p = path.join(frameDir, `frame-${String(i).padStart(4, "0")}.png`);
+      fs.writeFileSync(p, frame.png);
+      return p;
+    });
+
+    const listLines = [];
+    frames.forEach((frame, i) => {
+      // ffmpeg's concat demuxer wants forward slashes and single-quoted paths regardless of host OS.
+      const safePath = framePaths[i].replace(/\\/g, "/");
+      listLines.push(`file '${safePath}'`);
+      listLines.push(`duration ${(frame.holdMs / 1000).toFixed(3)}`);
+    });
+    listLines.push(`file '${framePaths[framePaths.length - 1].replace(/\\/g, "/")}'`);
+    fs.writeFileSync(listPath, listLines.join("\n"));
+
+    await run([
+      "-y",
+      "-f", "concat",
+      "-safe", "0",
+      "-i", listPath,
+      "-vf", "format=yuv420p",
+      "-r", "30",
+      "-vsync", "cfr",
+      "-c:v", "libx264",
+      "-pix_fmt", "yuv420p",
+      "-movflags", "+faststart",
+      outputPath
+    ], 60000);
+    return fs.readFileSync(outputPath);
+  } finally {
+    fs.rm(frameDir, { recursive: true, force: true }, () => {});
+    fs.rm(outputPath, { force: true }, () => {});
+  }
+}
+
+module.exports = { generateShortVideo, generateAnimatedShortVideo };

@@ -189,7 +189,12 @@ function escapeXml(s) {
 // computed server-side instead of against a live SVG element. Used for the fallback/live-mover
 // path, and as the honest 2-point entry->now line for /degen and /breakout picks (see
 // bestCall.js -- those have no real candle history to draw more than 2 points from).
-function chartPaths(closes, x, y, w, h) {
+// visibleCount (default: all of them) draws only the first N points -- used by the reveal-video
+// pipeline (see buildRevealFrames) to animate the line growing in over several frames. min/max/
+// stepX are always computed from the FULL closes array regardless, so the axis scale and point
+// spacing never shift between frames as more of the line becomes visible -- only reveals more of
+// an already-fixed line, never redraws it at a different scale.
+function chartPaths(closes, x, y, w, h, visibleCount) {
   const pad = 6;
   const min = Math.min(...closes), max = Math.max(...closes);
   const range = (max - min) || 1;
@@ -197,17 +202,22 @@ function chartPaths(closes, x, y, w, h) {
   // small-cap coin could plausibly return only one intraday bar) so this produces a flat line
   // at x=pad instead of NaN coordinates from a divide-by-zero.
   const stepX = closes.length > 1 ? (w - pad * 2) / (closes.length - 1) : 0;
-  const points = closes.map((v, i) => [
+  const allPoints = closes.map((v, i) => [
     x + pad + i * stepX,
     y + pad + (h - pad * 2) * (1 - (v - min) / range)
   ]);
+  const n = Math.max(1, Math.min(allPoints.length, visibleCount ?? allPoints.length));
+  const points = allPoints.slice(0, n);
   const line = points.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
   const area = line + ` L${points[points.length - 1][0].toFixed(1)},${(y + h - pad).toFixed(1)} L${points[0][0].toFixed(1)},${(y + h - pad).toFixed(1)} Z`;
   const last = points[points.length - 1];
-  const first = points[0];
+  const first = allPoints[0];
   // First point is always the entry -- closes[0] is the logged entry price by construction
   // (see bestCall.js), never a fabricated earlier value.
-  return { line, area, lastX: last[0], lastY: last[1], entryX: first[0], entryY: first[1], min, max };
+  return {
+    line, area, lastX: last[0], lastY: last[1], entryX: first[0], entryY: first[1], min, max,
+    fullyRevealed: n === allPoints.length
+  };
 }
 
 // Real candlesticks from real daily OHLC (see bestCall.js -- only /alerts and /discover picks
@@ -219,7 +229,11 @@ function chartPaths(closes, x, y, w, h) {
 // that candle's own close, sets the marker's Y position, so the circled entry lines up exactly
 // with the "Called at $X" text above it rather than whatever a nearby candle's close happens to
 // be (usually near-identical, but this keeps them exact rather than approximate).
-function candlePaths(ohlc, x, y, w, h, entryIndex, entryPrice) {
+// visibleCount (default: all of them) draws only the first N candles -- used by the reveal-video
+// pipeline (see buildRevealFrames) to animate the chart building up one candle at a time. Slot
+// positions and the min/max scale are always computed from the FULL ohlc array regardless, so
+// candles never shift position or rescale as more of them become visible.
+function candlePaths(ohlc, x, y, w, h, entryIndex, entryPrice, visibleCount) {
   const pad = 6;
   const values = ohlc.flatMap(c => [c.high, c.low]);
   const min = Math.min(...values, entryPrice), max = Math.max(...values, entryPrice);
@@ -230,7 +244,8 @@ function candlePaths(ohlc, x, y, w, h, entryIndex, entryPrice) {
   const toY = v => y + pad + (h - pad * 2) * (1 - (v - min) / range);
   const slotX = i => x + pad + slotW * (i + 0.5);
 
-  const candles = ohlc.map((c, i) => {
+  const shown = Math.max(0, Math.min(n, visibleCount ?? n));
+  const candles = ohlc.slice(0, shown).map((c, i) => {
     const cx = slotX(i);
     const isUp = c.close >= c.open;
     const color = isUp ? COLORS.winner : COLORS.loser;
@@ -245,7 +260,10 @@ function candlePaths(ohlc, x, y, w, h, entryIndex, entryPrice) {
   const lastX = x + pad + slotW * (n - 0.5);
   const lastY = toY(ohlc[n - 1].close);
   const clampedEntryIndex = Math.max(0, Math.min(n - 1, entryIndex ?? 0));
-  return { candles, lastX, lastY, min, max, entryX: slotX(clampedEntryIndex), entryY: toY(entryPrice) };
+  return {
+    candles, lastX, lastY, min, max, entryX: slotX(clampedEntryIndex), entryY: toY(entryPrice),
+    fullyRevealed: shown === n
+  };
 }
 
 // Gridlines + a subtle frame behind the chart itself (candlestick or line) -- the piece that was
@@ -300,42 +318,65 @@ function entryMarkerSvg(entryX, entryY, frameBottomY) {
 // only used by the standalone dev scripts now) keeps its original look -- a "BUY" ring makes
 // sense on a /shorts best-call highlight, not on a "loser" card in the old format, which has no
 // real buy-entry concept at all.
-function cardSvg({ x, y, w, h, accent, accentFill, tagLabel, ticker, pctChange, openPrice, nowPrice, closes, ohlc, entryIndex, entryPriceRaw, timeframe, volumeSurgeRatio, chartH = 170, entryLabel = "Open", showEntryMarker = false }) {
+//
+// `reveal`, when provided, renders one frame of the animated reveal video (see buildRevealFrames)
+// instead of the finished static card -- omitted entirely (stays undefined) for the real /shorts
+// PNG, which keeps this function's default behavior byte-for-byte identical to before. Every
+// reveal.* field defaults to "fully shown" so a partial reveal object only has to specify what's
+// actually still hidden at that frame.
+function cardSvg({
+  x, y, w, h, accent, accentFill, tagLabel, ticker, pctChange, openPrice, nowPrice, closes, ohlc,
+  entryIndex, entryPriceRaw, timeframe, volumeSurgeRatio, chartH = 170, entryLabel = "Open",
+  showEntryMarker = false, reveal
+}) {
   const pad = 40;
   const chartY = y + h - pad - chartH - 40;
   const chartX = x + pad, chartW = w - pad * 2;
 
+  const showTag = reveal?.showTag ?? true;
+  const showTicker = reveal?.showTicker ?? true;
+  const showPct = reveal?.showPct ?? true;
+  const pctFraction = reveal?.pctFraction ?? 1;
+  const showPriceLine = reveal?.showPriceLine ?? true;
+  const showChart = reveal?.showChart ?? true;
+  const chartRevealCount = reveal?.chartRevealCount; // undefined = fully revealed
+  const showMarker = showEntryMarker && (reveal?.showEntryMarker ?? true);
+
   const useCandles = Array.isArray(ohlc) && ohlc.length >= 2;
-  const frame = useCandles
+  const frame = !showChart ? null : (useCandles
     ? (() => {
-        const c = candlePaths(ohlc, chartX, chartY, chartW, chartH, entryIndex, entryPriceRaw);
-        return { ...c, draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max) + c.candles + (showEntryMarker ? entryMarkerSvg(c.entryX, c.entryY, chartY + chartH) : "") };
+        const c = candlePaths(ohlc, chartX, chartY, chartW, chartH, entryIndex, entryPriceRaw, chartRevealCount);
+        return { ...c, draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max) + c.candles + (showMarker ? entryMarkerSvg(c.entryX, c.entryY, chartY + chartH) : "") };
       })()
-    : (() => { const c = chartPaths(closes, chartX, chartY, chartW, chartH); return {
+    : (() => { const c = chartPaths(closes, chartX, chartY, chartW, chartH, chartRevealCount); return {
         ...c,
         draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max) +
           `<path d="${c.area}" fill="${accentFill}"/>` +
           `<path d="${c.line}" fill="none" stroke="${accent}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>` +
-          (showEntryMarker ? entryMarkerSvg(c.entryX, c.entryY, chartY + chartH) : "") +
-          `<circle cx="${c.lastX.toFixed(1)}" cy="${c.lastY.toFixed(1)}" r="9" fill="${accent}"/>`
-      }; })();
+          (showMarker ? entryMarkerSvg(c.entryX, c.entryY, chartY + chartH) : "") +
+          // The "now" dot only makes sense once the line has actually reached its final point --
+          // showing it mid-reveal would put a solid endpoint dot in the middle of the line.
+          (c.fullyRevealed ? `<circle cx="${c.lastX.toFixed(1)}" cy="${c.lastY.toFixed(1)}" r="9" fill="${accent}"/>` : "")
+      }; })());
 
-  const pctText = `${pctChange >= 0 ? "+" : ""}${pctChange.toFixed(1)}%`;
+  const pctText = `${pctChange >= 0 ? "+" : ""}${(pctChange * pctFraction).toFixed(1)}%`;
   const surgeText = volumeSurgeRatio ? `${volumeSurgeRatio.toFixed(1)}× VOLUME` : null;
   const surgeWidth = surgeText ? 46 + surgeText.length * 15 : 0;
 
   return `
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="26" fill="${COLORS.card}" stroke="${accent}" stroke-opacity="0.45" stroke-width="2.5"/>
+    ${showTag ? `
     <rect x="${x + pad}" y="${y + 30}" width="150" height="44" rx="10" fill="${accentFill}"/>
     <text x="${x + pad + 18}" y="${y + 60}" font-family="DejaVu Sans" font-size="23" font-weight="800" letter-spacing="1.5" fill="${accent}">${escapeXml(tagLabel.toUpperCase())}</text>
+    ` : ""}
     ${surgeText ? `
     <rect x="${x + w - pad - surgeWidth}" y="${y + 30}" width="${surgeWidth}" height="44" rx="10" fill="rgba(88,101,242,0.18)"/>
     <text x="${x + w - pad - surgeWidth / 2}" y="${y + 60}" font-family="DejaVu Sans" font-size="21" font-weight="800" letter-spacing="0.5" fill="${COLORS.cta}" text-anchor="middle">${escapeXml(surgeText)}</text>
     ` : ""}
-    <text x="${x + pad}" y="${y + 140}" font-family="DejaVu Sans Mono" font-size="52" font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(ticker)}</text>
-    <text x="${x + pad}" y="${y + 235}" font-family="DejaVu Sans" font-size="92" font-weight="900" fill="${accent}">${pctText}</text>
-    <text x="${x + pad}" y="${y + 278}" font-family="DejaVu Sans" font-size="29" fill="${COLORS.textSecondary}">${escapeXml(entryLabel)} <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(openPrice)}</tspan> → Now <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(nowPrice)}</tspan></text>
-    ${frame.draw}
+    ${showTicker ? `<text x="${x + pad}" y="${y + 140}" font-family="DejaVu Sans Mono" font-size="52" font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(ticker)}</text>` : ""}
+    ${showPct ? `<text x="${x + pad}" y="${y + 235}" font-family="DejaVu Sans" font-size="92" font-weight="900" fill="${accent}">${pctText}</text>` : ""}
+    ${showPriceLine ? `<text x="${x + pad}" y="${y + 278}" font-family="DejaVu Sans" font-size="29" fill="${COLORS.textSecondary}">${escapeXml(entryLabel)} <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(openPrice)}</tspan> → Now <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(nowPrice)}</tspan></text>` : ""}
+    ${frame ? frame.draw : ""}
     <text x="${x + pad}" y="${y + h - 24}" font-family="DejaVu Sans" font-size="23" font-weight="700" letter-spacing="1" fill="${COLORS.textMuted}">${escapeXml(timeframe.toUpperCase())}</text>
   `;
 }
@@ -418,34 +459,58 @@ async function generateShortImage(winner, loser) {
 // Short, YouTube's own UI (Subscribe button, channel name, caption) overlays roughly the bottom
 // ~20% of the screen -- a CTA any lower gets hidden behind that chrome. 1470 clears it with real
 // margin both to the card above (which ends at 1440) and to YouTube's overlay below.
-async function generateHighlightImage(highlight) {
-  if (!highlight?.closes?.length) {
-    throw new Error("highlight is missing closes -- needs at least a 2-point [entry, now] line");
-  }
+//
+// Read once and cached -- the logo never changes mid-process, and buildRevealFrames calls this
+// dozens of times per video (once per animation frame), where re-reading the same file from disk
+// every time would be pure waste.
+let logoSrcCache = null;
+function logoSrc() {
+  if (!logoSrcCache) logoSrcCache = `data:image/png;base64,${fs.readFileSync(LOGO_PATH).toString("base64")}`;
+  return logoSrcCache;
+}
 
+// Builds the SVG markup only (no rasterizing) -- split out from generateHighlightImage so the
+// reveal-video pipeline (buildRevealFrames) can render dozens of partial-content frames cheaply
+// without redoing the sharp/PNG round trip every time it just wants the markup. `reveal`, when
+// provided, hides/partially-shows pieces for one frame of the animated build-up; omitted (the
+// normal /shorts image path) it's undefined throughout and every element renders in full --
+// behaviorally identical to before this function existed.
+function highlightSvg(highlight, reveal) {
   const W = 1080, H = 1920;
-  const logoSrc = `data:image/png;base64,${fs.readFileSync(LOGO_PATH).toString("base64")}`;
   // Bigger than the dual-card layout's 820/170 -- there's no second card competing for space, so
   // the single card (and its chart) should actually use the extra room instead of leaving a dead
   // gap before the CTA button.
   const cardX = 70, cardW = W - 140, cardH = 1000;
   const cardY = 440;
 
-  const svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+  const showLogo = reveal?.showLogo ?? true;
+  const showHeadline = reveal?.showHeadline ?? true;
+  const showCaption = reveal?.showCaption ?? true;
+  const showCard = reveal?.showCard ?? true;
+  const showCTA = reveal?.showCTA ?? true;
+  const showFooter = reveal?.showFooter ?? true;
+
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
   <rect width="${W}" height="${H}" fill="${COLORS.surface}"/>
   <rect x="8" y="8" width="${W - 16}" height="${H - 16}" rx="36" fill="none" stroke="${COLORS.winner}" stroke-width="6" stroke-opacity="0.55"/>
 
+  ${showLogo ? `
   <clipPath id="logoClip"><rect x="70" y="80" width="64" height="64" rx="16"/></clipPath>
-  <image href="${logoSrc}" x="70" y="80" width="64" height="64" clip-path="url(#logoClip)"/>
+  <image href="${logoSrc()}" x="70" y="80" width="64" height="64" clip-path="url(#logoClip)"/>
   <text x="150" y="122" font-family="DejaVu Sans" font-size="29" font-weight="700" letter-spacing="2" fill="${COLORS.textSecondary}">STP · ${escapeXml(highlight.badgeText.toUpperCase())}</text>
+  ` : ""}
 
+  ${showHeadline ? `
   <text x="70" y="212" font-family="DejaVu Sans" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">${escapeXml(highlight.headlineLines[0])}</text>
   <text x="70" y="280" font-family="DejaVu Sans" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">${escapeXml(highlight.headlineLines[1])}</text>
+  ` : ""}
 
+  ${showCaption ? `
   <circle cx="80" cy="325" r="9" fill="${COLORS.cta}"/>
   <text x="100" y="334" font-family="DejaVu Sans" font-size="29" font-weight="600" fill="${COLORS.textSecondary}">${escapeXml(highlight.captionText)}</text>
+  ` : ""}
 
-  ${cardSvg({
+  ${showCard ? cardSvg({
     x: cardX, y: cardY, w: cardW, h: cardH, accent: COLORS.winner, accentFill: COLORS.winnerFill,
     tagLabel: highlight.badgeText, ticker: highlight.ticker, pctChange: highlight.pctChange,
     openPrice: formatMoney(highlight.openPrice), nowPrice: formatMoney(highlight.nowPrice),
@@ -456,18 +521,113 @@ async function generateHighlightImage(highlight) {
     // Live Mover cards have no alert behind them at all: closes[0] is just the start of today's
     // displayed window, not anything the bot ever called. Showing a "BUY" circle there would
     // visually claim a signal that never happened, so it's Real-Call-only.
-    showEntryMarker: highlight.badgeText === "Real Call"
-  })}
+    showEntryMarker: highlight.badgeText === "Real Call",
+    reveal: reveal?.card
+  }) : ""}
 
+  ${showCTA ? `
   <rect x="${W / 2 - 230}" y="1470" width="460" height="90" rx="45" fill="${COLORS.cta}"/>
   <text x="${W / 2}" y="1526" font-family="DejaVu Sans" font-size="35" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
+  ` : ""}
 
+  ${showFooter ? `
   <text x="${W / 2}" y="1620" font-family="DejaVu Sans" font-size="25" font-weight="700" fill="${COLORS.textSecondary}" text-anchor="middle">${escapeXml(highlight.metaLine)}</text>
   <text x="${W / 2}" y="1665" font-family="DejaVu Sans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Technical pattern data, not financial advice.</text>
   <text x="${W / 2}" y="1695" font-family="DejaVu Sans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
+  ` : ""}
 </svg>`;
+}
 
-  return sharp(Buffer.from(svg)).png().toBuffer();
+async function generateHighlightImage(highlight) {
+  if (!highlight?.closes?.length) {
+    throw new Error("highlight is missing closes -- needs at least a 2-point [entry, now] line");
+  }
+  return sharp(Buffer.from(highlightSvg(highlight))).png().toBuffer();
+}
+
+// Total video length -- matches shortsVideo.js's old static-hold default, so the reveal video
+// replacing it isn't a surprising length change on its own.
+const REVEAL_VIDEO_MS = 8000;
+const CHART_REVEAL_MS = 1400;
+const MAX_CHART_STEPS = 24; // caps frame count (and render/encode time) regardless of candle count
+
+// Builds an ordered list of { svg, holdMs } frames that together tell the same story as the
+// static /shorts image, just revealed in beats instead of shown all at once: logo -> headline ->
+// empty card -> ticker -> percentage counting up -> price line -> chart building in candle-by-
+// candle (or point-by-point for the 2-point line format) -> entry marker (Real Call only) -> CTA.
+// Every frame is built from the exact same highlightSvg/cardSvg/candlePaths/chartPaths functions
+// that render the real static PNG -- this never approximates the chart in a different format the
+// way an early concept mockup did; it's the same real chart, just revealed progressively.
+function buildRevealFrames(highlight) {
+  if (!highlight?.closes?.length) {
+    throw new Error("highlight is missing closes -- needs at least a 2-point [entry, now] line");
+  }
+  const useCandles = Array.isArray(highlight.ohlc) && highlight.ohlc.length >= 2;
+  const itemCount = useCandles ? highlight.ohlc.length : highlight.closes.length;
+  const showEntryMarker = highlight.badgeText === "Real Call";
+
+  const frames = [];
+  const push = (holdMs, reveal) => frames.push({ svg: highlightSvg(highlight, reveal), holdMs });
+
+  const bare = { showLogo: false, showHeadline: false, showCaption: false, showCard: false, showCTA: false, showFooter: false };
+  const withLogo = { ...bare, showLogo: true };
+  const withHeadline = { ...withLogo, showHeadline: true };
+  const emptyCard = { showTag: false, showTicker: false, showPct: false, showPriceLine: false, showChart: false, showEntryMarker: false };
+  const withCard = { ...withHeadline, showCaption: true, showCard: true, card: emptyCard };
+  const withTickerCard = { showTag: true, showTicker: true, showPct: false, showPriceLine: false, showChart: false, showEntryMarker: false };
+  const withTicker = { ...withCard, card: withTickerCard };
+
+  push(300, bare);
+  push(600, withLogo);
+  push(700, withHeadline);
+  push(400, withCard);
+  push(150, withTicker);
+
+  // Percentage counts up over 6 steps rather than jumping straight to the final value -- a count-
+  // up reads as "this is being calculated," which is a better fit for a real-data card than an
+  // instant number would be.
+  const PCT_STEPS = 6;
+  for (let s = 1; s <= PCT_STEPS; s++) {
+    push(1200 / PCT_STEPS, {
+      ...withCard,
+      card: { ...withTickerCard, showPct: true, pctFraction: s / PCT_STEPS }
+    });
+  }
+
+  const withPriceLine = { ...withTickerCard, showPct: true, pctFraction: 1, showPriceLine: true };
+  push(550, { ...withCard, card: withPriceLine });
+
+  const chartSteps = Math.min(itemCount, MAX_CHART_STEPS);
+  for (let s = 1; s <= chartSteps; s++) {
+    const revealCount = Math.ceil((s / chartSteps) * itemCount);
+    push(CHART_REVEAL_MS / chartSteps, {
+      ...withCard,
+      card: { ...withPriceLine, showChart: true, chartRevealCount: revealCount, showEntryMarker: false }
+    });
+  }
+
+  const elapsedBeforeFinal = 300 + 600 + 700 + 400 + 150 + 1200 + 550 + CHART_REVEAL_MS;
+  if (showEntryMarker) {
+    push(400, { ...withCard, card: { ...withPriceLine, showChart: true, showEntryMarker: true } });
+    push(REVEAL_VIDEO_MS - elapsedBeforeFinal - 400, undefined); // undefined reveal = everything shown, same as the real static image
+  } else {
+    push(REVEAL_VIDEO_MS - elapsedBeforeFinal, undefined);
+  }
+
+  return frames;
+}
+
+// Rasterizes buildRevealFrames' output to real PNG buffers via the same sharp/SVG pipeline the
+// static image uses -- never a different renderer, so every frame is pixel-faithful to what
+// generateHighlightImage would produce at that same reveal state.
+async function generateRevealFramePngs(highlight) {
+  const frames = buildRevealFrames(highlight);
+  const rendered = [];
+  for (const frame of frames) {
+    const png = await sharp(Buffer.from(frame.svg)).png().toBuffer();
+    rendered.push({ png, holdMs: frame.holdMs });
+  }
+  return rendered;
 }
 
 // Turns a bestCall.js result into the shape generateHighlightImage needs. Framed as "this
@@ -544,5 +704,6 @@ function buildYoutubeCaption(highlight) {
 
 module.exports = {
   findMover, generateShortHtml, generateShortImage, generateHighlightImage,
-  buildCallHighlight, buildFallbackHighlight, buildYoutubeCaption, DISCORD_INVITE_URL
+  buildCallHighlight, buildFallbackHighlight, buildYoutubeCaption, DISCORD_INVITE_URL,
+  buildRevealFrames, generateRevealFramePngs
 };
