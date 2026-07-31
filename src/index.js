@@ -268,7 +268,7 @@ const SHORTS_UNIVERSE = "crypto-smallcap";
 // to the given channel as an embedded image (not a file you have to download and open) alongside
 // the stats embed and a real "Join the Discord" link button, then attempts the additive MP4 +
 // YouTube caption follow-up (never allowed to fail the actual post above if it errors).
-async function postShortsHighlight(highlight, channel) {
+async function postShortsHighlight(highlight, channel, guildId) {
   const png = await shorts.generateHighlightImage(highlight);
   const filename = "stp-short.png";
   const file = new AttachmentBuilder(png, { name: filename });
@@ -283,6 +283,11 @@ async function postShortsHighlight(highlight, channel) {
     .setURL(shorts.DISCORD_INVITE_URL);
   const row = new ActionRowBuilder().addComponents(joinDiscordButton);
   await channel.send({ embeds: [highlightEmbed(highlight, filename)], files: [file], components: [row] });
+  // Recorded here, right after the post that's guaranteed to always go out (everything below is
+  // additive and allowed to fail) -- see getLastShortsPostAt's use in runShortsAutoCheck, which
+  // needs an accurate "did we actually post" signal to decide whether to fall back to a
+  // live-mover post rather than staying silent.
+  watchlist.recordShortsPostAt(guildId);
 
   // Additive only -- the image above is the real /shorts post and always goes out regardless of
   // what happens here. This just also hands over a ready-to-upload vertical MP4 so posting to
@@ -374,20 +379,37 @@ async function runShortsDrop(guildId, channel) {
     }
     highlight = shorts.buildFallbackHighlight(winner);
   }
-  await postShortsHighlight(highlight, channel);
+  await postShortsHighlight(highlight, channel, guildId);
 }
 
-// Scheduled /shorts on check -- event-driven, not a fixed daily time. Only posts when
-// findBestCall finds a genuinely NEW real winner (isFresh), never the live-mover fallback and
-// never a forced repeat of something already featured recently -- so this silently does nothing
-// most checks, and only produces a post when there's actually real, fresh content worth sharing.
+// Scheduled /shorts on check -- event-driven, not a fixed daily time: posts immediately whenever
+// findBestCall finds a genuinely NEW real winner (isFresh), never a forced repeat of something
+// already featured recently. On its own this can go silent for days if nothing fresh happens to
+// qualify, which real growth data says is the single worst thing for a Shorts channel -- posting
+// consistency (roughly daily) matters more than almost any other factor, and new content gets a
+// real algorithmic boost specifically in its first 48 hours, which a multi-day gap forfeits. So
+// once it's been too long since the last post of ANY kind (real call or fallback), this falls
+// back to the same live-mover content /shorts now uses, purely to keep the channel active --
+// still winner-only, still never fabricated, just not gated on a real call existing right now.
+const SHORTS_CONSISTENCY_FALLBACK_MS = 22 * 60 * 60 * 1000; // under 24h on purpose -- an hourly-ish
+// check interval means waiting for exactly 24h risks sliding later and later each day; 22h keeps it
+// converging back toward roughly one post a day instead of drifting.
 async function runShortsAutoCheck(guildId, channel) {
   const best = await findBestCall(guildId);
-  if (!best || !best.isFresh) return;
+  if (best && best.isFresh) {
+    const highlight = shorts.buildCallHighlight(best);
+    watchlist.recordShortsFeatured(guildId, best.symbol);
+    await postShortsHighlight(highlight, channel, guildId);
+    return;
+  }
 
-  const highlight = shorts.buildCallHighlight(best);
-  watchlist.recordShortsFeatured(guildId, best.symbol);
-  await postShortsHighlight(highlight, channel);
+  const sinceLastPost = Date.now() - watchlist.getLastShortsPostAt(guildId);
+  if (sinceLastPost < SHORTS_CONSISTENCY_FALLBACK_MS) return;
+
+  const { winner } = await shorts.findMover(SHORTS_UNIVERSE, SHORTS_SAMPLE_SIZE);
+  if (!winner) return; // stay silent rather than posting garbage -- tries again next check
+  const highlight = shorts.buildFallbackHighlight(winner);
+  await postShortsHighlight(highlight, channel, guildId);
 }
 
 // Checks a watched YouTube channel's public feed for something newer than the last video seen,

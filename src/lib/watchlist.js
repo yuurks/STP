@@ -462,6 +462,24 @@ function recordShortsFeatured(guildId, symbol) {
   saveAll(all);
 }
 
+// Separate from shortsFeaturedHistory above on purpose -- that only records real CALLS (never
+// the live-mover fallback), so it can't answer "when did we last post ANYTHING to Shorts,
+// regardless of kind." Growth research is consistent that posting cadence (roughly daily) matters
+// more than any other single factor, so runShortsAutoCheck needs a true "time since last post of
+// any kind" to know when to fall back to a live-mover post rather than staying silent because no
+// fresh real call happened to qualify that day.
+function getLastShortsPostAt(guildId) {
+  const all = loadAll();
+  return all[guildId]?.lastShortsPostAt || 0;
+}
+
+function recordShortsPostAt(guildId) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.lastShortsPostAt = Date.now();
+  saveAll(all);
+}
+
 // /ytwatch config: channelId (the resolved YouTube channel), discordChannelId (where to post),
 // intervalMinutes, lastRun, and lastVideoId (the most recent video ID already seen/announced --
 // seeded at setup time so turning this on never retroactively announces a channel's existing
@@ -526,6 +544,7 @@ module.exports = {
   setAlertDigestSchedule, markAlertDigestRun, allGuildsWithAlertDigestSchedule,
   setShortsSchedule, allGuildsWithShortsSchedule, markShortRun,
   getRecentShortsFeatured, recordShortsFeatured,
+  getLastShortsPostAt, recordShortsPostAt,
   setYoutubeWatch, markYoutubeWatchRun, allGuildsWithYoutubeWatch,
   getDiscoverVerdicts, saveDiscoverVerdicts, logDiscoverAlert, getDiscoverAlertHistory,
   setDiscoverSchedule, markDiscoverRun, allGuildsWithDiscoverSchedule,

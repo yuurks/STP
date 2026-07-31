@@ -797,7 +797,11 @@ function buildYoutubeCaption(highlight) {
   const pctText = `${sign}${highlight.pctChange.toFixed(1)}%`;
   const tickerLower = highlight.ticker.toLowerCase().replace(/[^a-z0-9]/g, "");
 
-  const title = `${highlight.ticker} ${pctText} — ${highlight.badgeText} #Shorts`.slice(0, 100);
+  // No hashtag in the title -- current YouTube Shorts SEO guidance is to keep the title clean and
+  // keyword-focused and put hashtags in the description instead, where the first three also
+  // surface as clickable links above the title anyway. #Shorts still appears once, in the
+  // description's hashtag line below, not duplicated here.
+  const title = `${highlight.ticker} ${pctText} — ${highlight.badgeText}`.slice(0, 100);
 
   const description = [
     `${highlight.ticker}: ${highlight.entryLabel} ${formatMoney(highlight.openPrice)} → Now ${formatMoney(highlight.nowPrice)} (${pctText}).`,
