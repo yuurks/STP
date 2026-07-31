@@ -196,6 +196,18 @@ const COLORS = {
   cta: "#5865f2"
 };
 
+// Decorative-only, never used for data encoding: the exact green sampled from assets/logo.png's
+// own pixels (see the shorts-redesign-concept "Option A -- Glow" comparison), used purely for the
+// glow halo behind the percentage and the card's ambient edge glow. COLORS.winner stays the actual
+// accent for anything that encodes information (border, candles, chart line) because it's the one
+// validated for CVD-safety/contrast -- the sampled brand green isn't re-checked against that bar,
+// so it never carries meaning on its own, only atmosphere.
+const GLOW_GREEN = "#06e02d";
+// A third, distinct accent reserved for exactly one thing: the "Verified" trust badge on a real,
+// logged /shorts call -- never reused elsewhere, so it stays legible as "this one specific claim
+// is verified" rather than blending into the page's green.
+const TRUST_CYAN = "#4fd6ff";
+
 function escapeXml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c]));
 }
@@ -365,10 +377,18 @@ function entryMarkerSvg(entryX, entryY, frameBottomY) {
 // PNG, which keeps this function's default behavior byte-for-byte identical to before. Every
 // reveal.* field defaults to "fully shown" so a partial reveal object only has to specify what's
 // actually still hidden at that frame.
+// hero (single-card /shorts highlight only -- the old dual-card dev format never opts in, since
+// its much shorter chartH=170 budget has no vertical room for a bigger percentage or a stat grid
+// without colliding with the chart) combines the strongest single idea from each of the three
+// redesign directions compared in the shorts-redesign-concept artifact: a genuinely dominant,
+// glowing percentage as the hero element (Editorial's "read the outcome in half a second" +
+// Glow's soft halo/verified-trust treatment), backed by a small monospace data-grid readout
+// (Terminal's "instrument panel" credibility) instead of one line of prose restating the same
+// two numbers.
 function cardSvg({
   x, y, w, h, accent, accentFill, tagLabel, ticker, pctChange, openPrice, nowPrice, closes, ohlc,
   entryIndex, entryPriceRaw, timeframe, volumeSurgeRatio, chartH = 170, entryLabel = "Open",
-  showEntryMarker = false, reveal
+  showEntryMarker = false, reveal, hero = false
 }) {
   const pad = 40;
   const chartY = y + h - pad - chartH - 40;
@@ -404,19 +424,74 @@ function cardSvg({
   const surgeText = volumeSurgeRatio ? `${volumeSurgeRatio.toFixed(1)}× VOLUME` : null;
   const surgeWidth = surgeText ? 46 + surgeText.length * 15 : 0;
 
+  // Suffixed by this card's own x/y so two cardSvg() calls in the same document (the dual-card
+  // winner/loser layout) never collide on filter/gradient ids -- SVG ids are global to the whole
+  // document, not scoped to the fragment that defines them.
+  const glowId = `cardGlow_${x}_${y}`;
+  const haloId = `pctHalo_${x}_${y}`;
+  // Trust badge sits immediately right of the tag pill -- gated on the raw showEntryMarker flag
+  // (this card IS a verified real call), not the reveal-timed ring itself, so it appears on the
+  // same beat as the tag/card rather than flickering in late alongside the entry-ring animation.
+  const showVerified = showEntryMarker && showTag;
+
   return `
-    <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="26" fill="${COLORS.card}" stroke="${accent}" stroke-opacity="0.45" stroke-width="2.5"/>
+    <defs>
+      <filter id="${glowId}" x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur stdDeviation="12" result="blur"/>
+        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+      <radialGradient id="${haloId}" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="${GLOW_GREEN}" stop-opacity="0.38"/>
+        <stop offset="100%" stop-color="${GLOW_GREEN}" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+    <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="26" fill="none" stroke="${GLOW_GREEN}" stroke-opacity="0.3" stroke-width="7" filter="url(#${glowId})"/>
+    <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="26" fill="${COLORS.card}" stroke="${accent}" stroke-opacity="0.5" stroke-width="2.5"/>
     ${showTag ? `
     <rect x="${x + pad}" y="${y + 30}" width="150" height="44" rx="10" fill="${accentFill}"/>
     <text x="${x + pad + 18}" y="${y + 60}" font-family="DejaVu Sans" font-size="23" font-weight="800" letter-spacing="1.5" fill="${accent}">${escapeXml(tagLabel.toUpperCase())}</text>
+    ` : ""}
+    ${showVerified ? `
+    <rect x="${x + pad + 162}" y="${y + 30}" width="150" height="44" rx="10" fill="rgba(79,214,255,0.14)"/>
+    <circle cx="${x + pad + 184}" cy="${y + 52}" r="6" fill="${TRUST_CYAN}"/>
+    <text x="${x + pad + 200}" y="${y + 60}" font-family="DejaVu Sans" font-size="19" font-weight="800" letter-spacing="1" fill="${TRUST_CYAN}">VERIFIED</text>
     ` : ""}
     ${surgeText ? `
     <rect x="${x + w - pad - surgeWidth}" y="${y + 30}" width="${surgeWidth}" height="44" rx="10" fill="rgba(88,101,242,0.18)"/>
     <text x="${x + w - pad - surgeWidth / 2}" y="${y + 60}" font-family="DejaVu Sans" font-size="21" font-weight="800" letter-spacing="0.5" fill="${COLORS.cta}" text-anchor="middle">${escapeXml(surgeText)}</text>
     ` : ""}
     ${showTicker ? `<text x="${x + pad}" y="${y + 140}" font-family="DejaVu Sans Mono" font-size="52" font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(ticker)}</text>` : ""}
-    ${showPct ? `<text x="${x + pad}" y="${y + 235}" font-family="DejaVu Sans" font-size="92" font-weight="900" fill="${accent}">${pctText}</text>` : ""}
-    ${showPriceLine ? `<text x="${x + pad}" y="${y + 278}" font-family="DejaVu Sans" font-size="29" fill="${COLORS.textSecondary}">${escapeXml(entryLabel)} <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(openPrice)}</tspan> → Now <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(nowPrice)}</tspan></text>` : ""}
+    ${showPct && hero ? `
+    <ellipse cx="${x + pad + 190}" cy="${(y + 210).toFixed(1)}" rx="340" ry="165" fill="url(#${haloId})"/>
+    <text x="${x + pad}" y="${y + 258}" font-family="DejaVu Sans" font-size="138" font-weight="900" letter-spacing="-2" fill="${accent}" filter="url(#${glowId})">${pctText}</text>
+    ` : ""}
+    ${showPct && !hero ? `
+    <ellipse cx="${x + pad + 150}" cy="${(y + 195).toFixed(1)}" rx="270" ry="130" fill="url(#${haloId})"/>
+    <text x="${x + pad}" y="${y + 240}" font-family="DejaVu Sans" font-size="100" font-weight="900" fill="${accent}" filter="url(#${glowId})">${pctText}</text>
+    ` : ""}
+    ${showPriceLine && hero ? (() => {
+      // Terminal-style readout, standing in for the old one-line "Called at $X -> Now $Y" prose --
+      // just CALLED/NOW, not a 3rd RANGE cell: chartFrame() below already prints its own
+      // "RANGE $min - $max" label right above the chart, so a duplicate cell here would repeat the
+      // exact same figure twice on one card.
+      const gy = y + 300, gh = 96, gGap = 3;
+      const cellsData = [
+        { k: entryLabel.toUpperCase(), v: openPrice },
+        { k: "NOW", v: nowPrice, pos: true }
+      ];
+      const gw = w - pad * 2;
+      const cw = (gw - gGap * (cellsData.length - 1)) / cellsData.length;
+      return `<g font-family="DejaVu Sans Mono">
+        ${cellsData.map((c, i) => {
+          const cx = x + pad + i * (cw + gGap);
+          return `
+          <rect x="${cx.toFixed(1)}" y="${gy}" width="${cw.toFixed(1)}" height="${gh}" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.12)" stroke-width="1.5"/>
+          <text x="${(cx + 18).toFixed(1)}" y="${gy + 32}" font-size="16" letter-spacing="1.5" fill="${COLORS.textMuted}">${escapeXml(c.k)}</text>
+          <text x="${(cx + 18).toFixed(1)}" y="${gy + 70}" font-size="26" font-weight="700" fill="${c.pos ? accent : COLORS.textPrimary}">${escapeXml(c.v)}</text>`;
+        }).join("")}
+      </g>`;
+    })() : ""}
+    ${showPriceLine && !hero ? `<text x="${x + pad}" y="${y + 282}" font-family="DejaVu Sans" font-size="29" fill="${COLORS.textSecondary}">${escapeXml(entryLabel)} <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(openPrice)}</tspan> → Now <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(nowPrice)}</tspan></text>` : ""}
     ${frame ? frame.draw : ""}
     <text x="${x + pad}" y="${y + h - 24}" font-family="DejaVu Sans" font-size="23" font-weight="700" letter-spacing="1" fill="${COLORS.textMuted}">${escapeXml(timeframe.toUpperCase())}</text>
   `;
@@ -592,7 +667,8 @@ function highlightSvg(highlight, reveal) {
     // displayed window, not anything the bot ever called. Showing a "BUY" circle there would
     // visually claim a signal that never happened, so it's Real-Call-only.
     showEntryMarker: highlight.badgeText === "Real Call",
-    reveal: reveal?.card
+    reveal: reveal?.card,
+    hero: true
   }) : ""}
 
   ${showCTA ? `
