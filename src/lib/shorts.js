@@ -667,8 +667,7 @@ function highlightSvg(highlight, reveal) {
     // displayed window, not anything the bot ever called. Showing a "BUY" circle there would
     // visually claim a signal that never happened, so it's Real-Call-only.
     showEntryMarker: highlight.badgeText === "Real Call",
-    reveal: reveal?.card,
-    hero: true
+    reveal: reveal?.card
   }) : ""}
 
   ${showCTA ? `
