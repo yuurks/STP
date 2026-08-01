@@ -493,11 +493,12 @@ function cardSvg({
 // single-card /shorts highlight (see highlightSvg).
 function heroCardSvg({
   x, y, w, h, ticker, pctChange, openPrice, nowPrice, closes, ohlc,
-  entryIndex, entryPriceRaw, timeframeLabel, entryLabel = "Called at", isVerified, reveal
+  entryIndex, entryPriceRaw, entryLabel = "Called at", isVerified, reveal
 }) {
-  const pad = 40;
+  const pad = 65; // matches the artifact's uniform 22px inset, scaled to this card's own size
   const accent = COLORS.winner; // still the CVD-validated color for the actual chart geometry
 
+  const showTopbar = reveal?.showTopbar ?? true;
   const showBadge = (reveal?.showTag ?? true) && isVerified;
   const showTicker = reveal?.showTicker ?? true;
   const showPct = reveal?.showPct ?? true;
@@ -511,7 +512,7 @@ function heroCardSvg({
   // Panel occupies most of the card -- real room for the real chart, exactly the "glass panel"
   // role the artifact's .panel plays around its (fixed, illustrative) bars.
   const panelX = x + pad, panelW = w - pad * 2;
-  const panelY = y + 360, panelBottom = y + h - 200;
+  const panelY = y + 766, panelBottom = y + h - 380;
   const panelPad = 24;
   const chartX = panelX + panelPad, chartW = panelW - panelPad * 2;
   const chartY = panelY + panelPad + 40; // extra top offset clears chartFrame's own RANGE label
@@ -533,11 +534,16 @@ function heroCardSvg({
       }; })());
 
   const pctText = `${pctChange >= 0 ? "+" : ""}${(pctChange * pctFraction).toFixed(1)}%`;
+  // "WIF/USD" -> "WIF / USD" -- display-only spacing to match the artifact's ticker exactly; the
+  // real symbol string (used for lookups/logging elsewhere) never gains the spaces.
+  const tickerDisplay = ticker.replace(/\//g, " / ");
   const glowId = `heroGlow_${x}_${y}`;
   const haloId = `heroHalo_${x}_${y}`;
   const ctaId = `heroCta_${x}_${y}`;
 
   const ctaY = y + h - 170, ctaH = 90;
+  const topbarIconSize = 65, topbarIconY = y + 59;
+  const liveDotCx = x + w - pad - 10, liveDotCy = topbarIconY + 32;
 
   return `
     <defs>
@@ -558,20 +564,26 @@ function heroCardSvg({
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="26" fill="none" stroke="${GLOW_GREEN}" stroke-opacity="0.3" stroke-width="7" filter="url(#${glowId})"/>
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="26" fill="${COLORS.card}" stroke="${GLOW_GREEN}" stroke-opacity="0.35" stroke-width="1.5"/>
 
-    ${showBadge ? `
-    <rect x="${x + pad}" y="${y + 30}" width="230" height="44" rx="22" fill="rgba(79,214,255,0.12)" stroke="${TRUST_CYAN}" stroke-opacity="0.4" stroke-width="1.5"/>
-    <circle cx="${x + pad + 22}" cy="${y + 52}" r="6" fill="${TRUST_CYAN}"/>
-    <text x="${x + pad + 40}" y="${y + 60}" font-family="DejaVu Sans" font-size="19" font-weight="800" letter-spacing="1" fill="${TRUST_CYAN}">VERIFIED REAL CALL</text>
+    ${showTopbar ? `
+    <clipPath id="topbarLogoClip_${x}_${y}"><rect x="${x + pad}" y="${topbarIconY}" width="${topbarIconSize}" height="${topbarIconSize}" rx="18"/></clipPath>
+    <image href="${logoSrc()}" x="${x + pad}" y="${topbarIconY}" width="${topbarIconSize}" height="${topbarIconSize}" clip-path="url(#topbarLogoClip_${x}_${y})"/>
+    <text x="${x + pad + topbarIconSize + 20}" y="${topbarIconY + 42}" font-family="DejaVu Sans" font-size="28" font-weight="800" letter-spacing="4" fill="${COLORS.textSecondary}">STP · SIGNAL DECK</text>
+    <circle cx="${liveDotCx}" cy="${liveDotCy}" r="9" fill="${GLOW_GREEN_LIGHT}" filter="url(#${glowId})"/>
     ` : ""}
 
-    ${showTicker ? `<text x="${x + pad}" y="${y + 150}" font-family="DejaVu Sans Mono" font-size="42" font-weight="700" fill="${COLORS.textSecondary}">${escapeXml(ticker)}</text>` : ""}
+    ${showBadge ? `
+    <rect x="${x + pad}" y="${y + 190}" width="440" height="70" rx="35" fill="rgba(79,214,255,0.12)" stroke="${TRUST_CYAN}" stroke-opacity="0.4" stroke-width="1.5"/>
+    <text x="${x + pad + 28}" y="${y + 235}" font-family="DejaVu Sans" font-size="28" font-weight="800" letter-spacing="1.5" fill="${TRUST_CYAN}">✓ VERIFIED REAL CALL</text>
+    ` : ""}
+
+    ${showTicker ? `<text x="${x + pad}" y="${y + 350}" font-family="DejaVu Sans" font-size="64" font-weight="700" letter-spacing="-1" fill="${COLORS.textSecondary}">${escapeXml(tickerDisplay)}</text>` : ""}
 
     ${showPct ? `
-    <ellipse cx="${x + pad + 190}" cy="${(y + 210).toFixed(1)}" rx="340" ry="165" fill="url(#${haloId})"/>
-    <text x="${x + pad}" y="${y + 258}" font-family="DejaVu Sans" font-size="138" font-weight="900" letter-spacing="-3" fill="${GLOW_GREEN_LIGHT}" filter="url(#${glowId})">${pctText}</text>
+    <ellipse cx="${x + pad + 300}" cy="${(y + 470).toFixed(1)}" rx="400" ry="200" fill="url(#${haloId})"/>
+    <text x="${x + pad}" y="${y + 530}" font-family="DejaVu Sans" font-size="172" font-weight="900" letter-spacing="-6" fill="${GLOW_GREEN_LIGHT}" filter="url(#${glowId})">${pctText}</text>
     ` : ""}
 
-    ${showPriceLine ? `<text x="${x + pad}" y="${y + 332}" xml:space="preserve" font-family="DejaVu Sans" font-size="32" fill="${COLORS.textSecondary}">${escapeXml(entryLabel)} <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(openPrice)}</tspan><tspan fill="${GLOW_GREEN_LIGHT}"> → </tspan>Now <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(nowPrice)}</tspan></text>` : ""}
+    ${showPriceLine ? `<text x="${x + pad}" y="${y + 615}" xml:space="preserve" font-family="DejaVu Sans" font-size="39" fill="${COLORS.textSecondary}">${escapeXml(entryLabel)} <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(openPrice)}</tspan><tspan fill="${GLOW_GREEN_LIGHT}"> → </tspan>Now <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(nowPrice)}</tspan></text>` : ""}
 
     ${frame ? frame.draw : ""}
 
@@ -696,67 +708,36 @@ function logoSrc() {
 // behaviorally identical to before this function existed.
 function highlightSvg(highlight, reveal) {
   const W = 1080, H = 1920;
-  // heroCardSvg folds its own CTA button in at the bottom (matching the Option A -- Glow artifact,
-  // where the CTA lives inside the card) -- so the card now runs almost the full remaining height,
-  // leaving just a thin footer strip below it for the meta line/legal text.
-  const cardX = 70, cardW = W - 140, cardH = 1340;
-  const cardY = 440;
-
-  const showLogo = reveal?.showLogo ?? true;
-  const showHeadline = reveal?.showHeadline ?? true;
-  const showCaption = reveal?.showCaption ?? true;
+  // The card IS the image now -- matching the Option A -- Glow artifact exactly, where the
+  // topbar/badge/hero/panel/CTA all live inside one self-contained card rather than being split
+  // across an outer logo/headline area (above) and a separate card (below). Only a thin strip at
+  // the very bottom is left outside the card, for the real provenance text the artifact's mockup
+  // never had to show (fired-date/source, legal disclaimer).
+  const cardX = 40, cardW = W - 80, cardH = 1700;
+  const cardY = 50;
   const showCard = reveal?.showCard ?? true;
   const showFooter = reveal?.showFooter ?? true;
-  // Always present (not gated behind any content-reveal beat) -- a persistent spinning watermark
-  // in the corner, independent of the left-side logo/badge which is part of the reveal sequence.
-  // 0 on the static image (generateHighlightImage never passes a reveal object, so this defaults
-  // to a fixed, non-spinning 0deg there -- only the frame-by-frame video actually animates it).
-  const logoRotationDeg = reveal?.logoRotationDeg ?? 0;
-  const rightLogoSize = 112, rightLogoX = W - 70 - rightLogoSize, rightLogoY = 70;
-  const rightLogoCx = rightLogoX + rightLogoSize / 2, rightLogoCy = rightLogoY + rightLogoSize / 2;
 
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
   <rect width="${W}" height="${H}" fill="${COLORS.surface}"/>
-  <rect x="8" y="8" width="${W - 16}" height="${H - 16}" rx="36" fill="none" stroke="${COLORS.winner}" stroke-width="6" stroke-opacity="0.55"/>
-
-  <g transform="rotate(${logoRotationDeg.toFixed(1)} ${rightLogoCx} ${rightLogoCy})">
-    <clipPath id="logoClipRight"><rect x="${rightLogoX}" y="${rightLogoY}" width="${rightLogoSize}" height="${rightLogoSize}" rx="28"/></clipPath>
-    <image href="${logoSrc()}" x="${rightLogoX}" y="${rightLogoY}" width="${rightLogoSize}" height="${rightLogoSize}" clip-path="url(#logoClipRight)"/>
-  </g>
-
-  ${showLogo ? `
-  <clipPath id="logoClip"><rect x="70" y="80" width="64" height="64" rx="16"/></clipPath>
-  <image href="${logoSrc()}" x="70" y="80" width="64" height="64" clip-path="url(#logoClip)"/>
-  <text x="150" y="122" font-family="DejaVu Sans" font-size="29" font-weight="700" letter-spacing="2" fill="${COLORS.textSecondary}">STP · ${escapeXml(highlight.badgeText.toUpperCase())}</text>
-  ` : ""}
-
-  ${showHeadline ? `
-  <text x="70" y="212" font-family="DejaVu Sans" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">${escapeXml(highlight.headlineLines[0])}</text>
-  <text x="70" y="280" font-family="DejaVu Sans" font-size="60" font-weight="900" fill="${COLORS.textPrimary}">${escapeXml(highlight.headlineLines[1])}</text>
-  ` : ""}
-
-  ${showCaption ? `
-  <circle cx="80" cy="325" r="9" fill="${COLORS.cta}"/>
-  <text x="100" y="334" font-family="DejaVu Sans" font-size="29" font-weight="600" fill="${COLORS.textSecondary}">${escapeXml(highlight.captionText)}</text>
-  ` : ""}
 
   ${showCard ? heroCardSvg({
     x: cardX, y: cardY, w: cardW, h: cardH,
     ticker: highlight.ticker, pctChange: highlight.pctChange,
     openPrice: formatMoney(highlight.openPrice), nowPrice: formatMoney(highlight.nowPrice),
-    closes: highlight.closes, ohlc: highlight.ohlc, timeframeLabel: highlight.timeframeLabel,
+    closes: highlight.closes, ohlc: highlight.ohlc,
     entryLabel: highlight.entryLabel, entryIndex: highlight.entryIndex, entryPriceRaw: highlight.openPrice,
     // Real Call cards mark a genuine logged alert (real price, real timestamp -- see bestCall.js).
     // Live Mover cards have no alert behind them at all: closes[0] is just the start of today's
     // displayed window, not anything the bot ever called. Showing the verified badge/entry ring
     // there would visually claim a signal that never happened, so it's Real-Call-only.
     isVerified: highlight.badgeText === "Real Call",
-    reveal: reveal?.card
+    reveal
   }) : ""}
 
   ${showFooter ? `
-  <text x="${W / 2}" y="1830" font-family="DejaVu Sans" font-size="25" font-weight="700" fill="${COLORS.textSecondary}" text-anchor="middle">${escapeXml(highlight.metaLine)}</text>
-  <text x="${W / 2}" y="1868" font-family="DejaVu Sans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
+  <text x="${W / 2}" y="1815" font-family="DejaVu Sans" font-size="24" font-weight="700" fill="${COLORS.textSecondary}" text-anchor="middle">${escapeXml(highlight.metaLine)}</text>
+  <text x="${W / 2}" y="1852" font-family="DejaVu Sans" font-size="21" fill="${COLORS.textMuted}" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
   ` : ""}
 </svg>`;
 }
@@ -777,20 +758,22 @@ const MAX_CHART_STEPS = 24; // caps frame count (and render/encode time) regardl
 
 // Yields { svg, holdMs } frames one at a time (a generator, not an array) that together tell the
 // same story as the static /shorts image, just revealed in beats instead of shown all at once:
-// logo -> headline -> empty card -> ticker -> percentage counting up -> price line -> chart
-// building in candle-by-candle (or point-by-point for the 2-point line format) -> entry marker
-// (Real Call only) -> CTA. Every frame is built from the exact same highlightSvg/cardSvg/
-// candlePaths/chartPaths functions that render the real static PNG -- this never approximates the
-// chart in a different format the way an early concept mockup did; it's the same real chart, just
-// revealed progressively.
+// card frame -> topbar -> badge/ticker -> percentage counting up -> price line -> chart building
+// in candle-by-candle (or point-by-point for the 2-point line format) -> entry marker (Real Call
+// only) -> CTA. Every frame is built from the exact same highlightSvg/heroCardSvg/candlePaths/
+// chartPaths functions that render the real static PNG -- this never approximates the chart in a
+// different format the way an early concept mockup did; it's the same real chart, just revealed
+// progressively.
 //
 // Deliberately a generator instead of building and returning a full array: a real Railway OOM
-// kill happened even after fixing the (much larger) embedded-logo issue, once frame count grew
-// with the smoother 10fps rotation -- materializing every frame's SVG text in memory at once,
-// however small each one now is individually, is still a real cost multiplied by 150+ frames on
-// top of whatever else is running in the same container. A generator means only ONE frame's SVG
-// text exists in memory at any moment; the caller (generateRevealFramePngs) rasterizes and
-// discards each one before the next is even built.
+// kill happened once in an earlier version of this pipeline once frame count grew too high --
+// materializing every frame's SVG text in memory at once, however small each one now is
+// individually, is still a real cost multiplied across 100+ frames on top of whatever else is
+// running in the same container. A generator means only ONE frame's SVG text exists in memory at
+// any moment; the caller (generateRevealFramePngs) rasterizes and discards each one before the
+// next is even built. (There used to also be a per-beat rotation-subdivision step here, for a
+// spinning corner-logo watermark -- removed along with that watermark when the card became the
+// whole image, so each beat below is now exactly one frame instead of several identical ones.)
 function* buildRevealFrames(highlight) {
   if (!highlight?.closes?.length) {
     throw new Error("highlight is missing closes -- needs at least a 2-point [entry, now] line");
@@ -799,62 +782,36 @@ function* buildRevealFrames(highlight) {
   const itemCount = useCandles ? highlight.ohlc.length : highlight.closes.length;
   const showEntryMarker = highlight.badgeText === "Real Call";
 
-  // Tried compositing this via an ffmpeg rotate+overlay filter instead (genuinely continuous,
-  // driven by real elapsed time rather than a per-frame angle) -- it's the technically correct fix
-  // for zero stepping, but it reliably got SIGKILLed by the OOM killer on Railway's Trial plan
-  // regardless of preset/encoder tuning (confirmed across several real deploys). Back to baking the
-  // rotation into each content frame's SVG, which has a long track record of not crashing here --
-  // every pushFrames() call splits its hold into sub-frames and advances the rotation angle across
-  // ALL of them using one running clock, not one that resets per beat.
-  // 150ms (~6.7fps): 100ms caused a real OOM in the past; 200ms was the safe fallback. This splits
-  // the difference -- if it ever proves unsafe again, widen it back toward 200ms first.
-  const ROTATION_FRAME_MS = 150;
-  const ROTATION_PERIOD_MS = 3000; // one full 360deg spin every 3s
-  let clockMs = 0;
   function* pushFrames(holdMs, reveal) {
-    const steps = Math.max(1, Math.round(holdMs / ROTATION_FRAME_MS));
-    const stepMs = holdMs / steps;
-    for (let i = 0; i < steps; i++) {
-      const logoRotationDeg = (clockMs / ROTATION_PERIOD_MS) * 360 % 360;
-      yield { svg: highlightSvg(highlight, { ...reveal, logoRotationDeg }), holdMs: stepMs };
-      clockMs += stepMs;
-    }
+    yield { svg: highlightSvg(highlight, reveal), holdMs };
   }
 
-  const bare = { showLogo: false, showHeadline: false, showCaption: false, showCard: false, showCTA: false, showFooter: false };
-  const withLogo = { ...bare, showLogo: true };
-  const withHeadline = { ...withLogo, showHeadline: true };
-  const emptyCard = { showTag: false, showTicker: false, showPct: false, showPriceLine: false, showChart: false, showEntryMarker: false, showCTA: false };
-  const withCard = { ...withHeadline, showCaption: true, showCard: true, card: emptyCard };
-  const withTickerCard = { showTag: true, showTicker: true, showPct: false, showPriceLine: false, showChart: false, showEntryMarker: false, showCTA: false };
-  const withTicker = { ...withCard, card: withTickerCard };
+  const bare = { showCard: false, showFooter: false };
+  const cardAppears = { showCard: true, showFooter: true, showTopbar: false, showTag: false, showTicker: false, showPct: false, showPriceLine: false, showChart: false, showEntryMarker: false, showCTA: false };
+  const withTopbar = { ...cardAppears, showTopbar: true };
+  const withTickerCard = { ...withTopbar, showTag: true, showTicker: true };
 
   yield* pushFrames(300, bare);
-  yield* pushFrames(600, withLogo);
-  yield* pushFrames(700, withHeadline);
-  yield* pushFrames(400, withCard);
-  yield* pushFrames(150, withTicker);
+  yield* pushFrames(600, cardAppears);
+  yield* pushFrames(700, withTopbar);
+  yield* pushFrames(550, withTickerCard);
 
   // Percentage counts up over 6 steps rather than jumping straight to the final value -- a count-
   // up reads as "this is being calculated," which is a better fit for a real-data card than an
   // instant number would be.
   const PCT_STEPS = 6;
   for (let s = 1; s <= PCT_STEPS; s++) {
-    yield* pushFrames(1200 / PCT_STEPS, {
-      ...withCard,
-      card: { ...withTickerCard, showPct: true, pctFraction: s / PCT_STEPS }
-    });
+    yield* pushFrames(1200 / PCT_STEPS, { ...withTickerCard, showPct: true, pctFraction: s / PCT_STEPS });
   }
 
   const withPriceLine = { ...withTickerCard, showPct: true, pctFraction: 1, showPriceLine: true };
-  yield* pushFrames(550, { ...withCard, card: withPriceLine });
+  yield* pushFrames(550, withPriceLine);
 
   // Each candle (or line point) gets its own mini entrance instead of popping in fully formed:
   // chartRevealCount is fractional across CHART_GROWTH_SUBSTEPS sub-frames per step, and
   // candlePaths/chartPaths both interpret a fractional count as "the newest one is still growing
   // in." Grouped into chartSteps outer steps (capped regardless of real candle count) so a long
-  // OHLC history still costs a bounded number of frames -- the smoothing is free frame-count-wise
-  // now that rotation no longer multiplies every frame above.
+  // OHLC history still costs a bounded number of frames.
   const chartSteps = Math.min(itemCount, MAX_CHART_STEPS);
   const CHART_GROWTH_SUBSTEPS = 3;
   let revealedSoFar = 0;
@@ -863,16 +820,15 @@ function* buildRevealFrames(highlight) {
     for (let g = 1; g <= CHART_GROWTH_SUBSTEPS; g++) {
       const revealCount = revealedSoFar + (target - revealedSoFar) * (g / CHART_GROWTH_SUBSTEPS);
       yield* pushFrames(CHART_REVEAL_MS / chartSteps / CHART_GROWTH_SUBSTEPS, {
-        ...withCard,
-        card: { ...withPriceLine, showChart: true, chartRevealCount: revealCount, showEntryMarker: false }
+        ...withPriceLine, showChart: true, chartRevealCount: revealCount, showEntryMarker: false
       });
     }
     revealedSoFar = target;
   }
 
-  const elapsedBeforeFinal = 300 + 600 + 700 + 400 + 150 + 1200 + 550 + CHART_REVEAL_MS;
+  const elapsedBeforeFinal = 300 + 600 + 700 + 550 + 1200 + 550 + CHART_REVEAL_MS;
   if (showEntryMarker) {
-    yield* pushFrames(400, { ...withCard, card: { ...withPriceLine, showChart: true, showEntryMarker: true } });
+    yield* pushFrames(400, { ...withPriceLine, showChart: true, showEntryMarker: true });
     yield* pushFrames(REVEAL_VIDEO_MS - elapsedBeforeFinal - 400, undefined); // undefined reveal = everything shown, same as the real static image
   } else {
     yield* pushFrames(REVEAL_VIDEO_MS - elapsedBeforeFinal, undefined);
@@ -968,7 +924,6 @@ function buildYoutubeCaption(highlight) {
 
   return { title, description };
 }
-
 module.exports = {
   findMover, generateShortHtml, generateShortImage, generateHighlightImage,
   buildCallHighlight, buildFallbackHighlight, buildYoutubeCaption, DISCORD_INVITE_URL,
