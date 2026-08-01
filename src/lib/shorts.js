@@ -904,17 +904,26 @@ function* buildRevealFrames(highlight) {
     yield { svg: highlightSvg(highlight, { ...reveal, liveDotOpacity }), holdMs };
   }
 
-  // Small -> overshoot -> settle, matching buildPromoRevealFrames' own "pop" technique -- each
-  // piece of the card (topbar, badge/ticker, price line, CTA) actually animates into place instead
-  // of snapping from invisible to fully shown in one frame cut. scaleKey names which of
-  // heroCardSvg's own *Scale reveal fields this beat is animating.
-  const POP_SCALES = [0.7, 1.15, 1.0];
-  const POP_MS = 90;
+  // Small -> overshoot -> settle -- each piece of the card (topbar, badge/ticker, price line, CTA)
+  // actually animates into place instead of snapping from invisible to fully shown in one frame
+  // cut. scaleKey names which of heroCardSvg's own *Scale reveal fields this beat is animating.
+  // Sampled from a real easing curve (easeOutBack) rather than 3 hand-picked keyframes -- the
+  // first version had a visible "step" feel from only 3 sub-frames; this samples the same
+  // shrink-overshoot-settle shape at enough points to read as continuous motion once encoded.
+  const POP_STEPS = 9;
+  const POP_STEP_MS = 40;
+  const POP_START_SCALE = 0.7;
+  function easeOutBack(t) {
+    const c1 = 1.70158, c3 = c1 + 1;
+    return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+  }
   function* pushPop(totalMs, reveal, scaleKey) {
-    for (const scale of POP_SCALES) {
-      yield* pushFrames(POP_MS, { ...reveal, [scaleKey]: scale });
+    for (let i = 1; i <= POP_STEPS; i++) {
+      const t = i / POP_STEPS;
+      const scale = POP_START_SCALE + (1 - POP_START_SCALE) * easeOutBack(t);
+      yield* pushFrames(POP_STEP_MS, { ...reveal, [scaleKey]: scale });
     }
-    const settledMs = totalMs - POP_MS * POP_SCALES.length;
+    const settledMs = totalMs - POP_STEP_MS * POP_STEPS;
     if (settledMs > 0) yield* pushFrames(settledMs, { ...reveal, [scaleKey]: 1.0 });
   }
 
