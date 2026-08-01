@@ -542,6 +542,9 @@ function heroCardSvg({
   const badgeTickerScale = reveal?.badgeTickerScale ?? 1;
   const priceScale = reveal?.priceScale ?? 1;
   const ctaScale = reveal?.ctaScale ?? 1;
+  // Matches the artifact's own ".live-dot { animation: pulse 1.8s ease-in-out infinite }" -- 1
+  // (fully lit) on the static image, driven by buildRevealFrames' running clock in the video.
+  const liveDotOpacity = reveal?.liveDotOpacity ?? 1;
   const showMarker = isVerified && (reveal?.showEntryMarker ?? true);
   const showCTA = reveal?.showCTA ?? true;
 
@@ -604,6 +607,16 @@ function heroCardSvg({
   const topbarIconSize = 65, topbarIconY = y + 68;
   const liveDotCx = x + w - pad - 10, liveDotCy = topbarIconY + 32;
 
+  // The card's background gradients (greenTint/cyanTint below) showed visible banding -- distinct
+  // diagonal facets instead of a smooth falloff -- on a large, dark, gradual radial fill. Tried
+  // fixing it with a feTurbulence dither texture first (twice: once at full card size, which cost
+  // ~1.7s/frame and 97MB of PNGs held in memory across a 97-frame video; once tiled via <pattern>,
+  // cheap to compute but the resulting noise still defeated PNG compression enough to land at a
+  // similar 83MB total) -- both were real OOM risk on the same pipeline that's been killed by
+  // exactly this kind of per-frame cost multiplication before, so neither shipped. Landed on more
+  // gradient stops instead: zero extra render cost, and enough to make the banding much less
+  // visible even though it doesn't erase the underlying 8-bit precision limit entirely.
+
   return `
     <defs>
       <filter id="${glowId}" x="-60%" y="-60%" width="220%" height="220%">
@@ -626,7 +639,11 @@ function heroCardSvg({
         <feMerge><feMergeNode in="shadow"/><feMergeNode in="SourceGraphic"/></feMerge>
       </filter>
       <radialGradient id="${haloId}" cx="50%" cy="50%" r="50%">
-        <stop offset="0%" stop-color="${GLOW_GREEN}" stop-opacity="0.4"/>
+        <stop offset="0%" stop-color="${GLOW_GREEN}" stop-opacity="0.25"/>
+        <stop offset="20%" stop-color="${GLOW_GREEN}" stop-opacity="0.19"/>
+        <stop offset="40%" stop-color="${GLOW_GREEN}" stop-opacity="0.13"/>
+        <stop offset="60%" stop-color="${GLOW_GREEN}" stop-opacity="0.08"/>
+        <stop offset="80%" stop-color="${GLOW_GREEN}" stop-opacity="0.035"/>
         <stop offset="100%" stop-color="${GLOW_GREEN}" stop-opacity="0"/>
       </radialGradient>
       <linearGradient id="${ctaId}" x1="0" y1="0" x2="1" y2="1">
@@ -634,11 +651,19 @@ function heroCardSvg({
         <stop offset="100%" stop-color="${COLORS.cta}"/>
       </linearGradient>
       <radialGradient id="${bgId}greenTint" cx="25%" cy="8%" r="85%">
-        <stop offset="0%" stop-color="${GLOW_GREEN}" stop-opacity="0.14"/>
+        <stop offset="0%" stop-color="${GLOW_GREEN}" stop-opacity="0.09"/>
+        <stop offset="20%" stop-color="${GLOW_GREEN}" stop-opacity="0.068"/>
+        <stop offset="40%" stop-color="${GLOW_GREEN}" stop-opacity="0.048"/>
+        <stop offset="60%" stop-color="${GLOW_GREEN}" stop-opacity="0.029"/>
+        <stop offset="80%" stop-color="${GLOW_GREEN}" stop-opacity="0.013"/>
         <stop offset="100%" stop-color="${GLOW_GREEN}" stop-opacity="0"/>
       </radialGradient>
       <radialGradient id="${bgId}cyanTint" cx="85%" cy="95%" r="45%">
-        <stop offset="0%" stop-color="${TRUST_CYAN}" stop-opacity="0.10"/>
+        <stop offset="0%" stop-color="${TRUST_CYAN}" stop-opacity="0.065"/>
+        <stop offset="20%" stop-color="${TRUST_CYAN}" stop-opacity="0.049"/>
+        <stop offset="40%" stop-color="${TRUST_CYAN}" stop-opacity="0.034"/>
+        <stop offset="60%" stop-color="${TRUST_CYAN}" stop-opacity="0.021"/>
+        <stop offset="80%" stop-color="${TRUST_CYAN}" stop-opacity="0.009"/>
         <stop offset="100%" stop-color="${TRUST_CYAN}" stop-opacity="0"/>
       </radialGradient>
     </defs>
@@ -653,7 +678,7 @@ function heroCardSvg({
     <clipPath id="topbarLogoClip_${x}_${y}"><rect x="${x + pad}" y="${topbarIconY}" width="${topbarIconSize}" height="${topbarIconSize}" rx="18"/></clipPath>
     <image href="${logoSrc()}" x="${x + pad}" y="${topbarIconY}" width="${topbarIconSize}" height="${topbarIconSize}" clip-path="url(#topbarLogoClip_${x}_${y})" filter="url(#${glowId})"/>
     <text x="${x + pad + topbarIconSize + 20}" y="${topbarIconY + 42}" font-family="DejaVu Sans" font-size="33" font-weight="800" letter-spacing="6" fill="#93a89e">STP · SIGNAL DECK</text>
-    <circle cx="${liveDotCx}" cy="${liveDotCy}" r="10.5" fill="${GLOW_GREEN_LIGHT}" filter="url(#${glowId})"/>
+    <circle cx="${liveDotCx}" cy="${liveDotCy}" r="10.5" fill="${GLOW_GREEN_LIGHT}" opacity="${liveDotOpacity.toFixed(2)}" filter="url(#${glowId})"/>
     `) : ""}
 
     ${showBadge ? popGroup(x + pad + 220, y + 240, badgeTickerScale, `
@@ -865,8 +890,18 @@ function* buildRevealFrames(highlight) {
   const itemCount = useCandles ? highlight.ohlc.length : highlight.closes.length;
   const showEntryMarker = highlight.badgeText === "Real Call";
 
+  // Live-dot pulse: a running clock (like the old corner-logo rotation clock, but far cheaper --
+  // this only ever varies one opacity number, never adds frames) sampled at each existing
+  // pushFrames call, matching the artifact's own ".live-dot { animation: pulse 1.8s ease-in-out
+  // infinite }". Reuses whatever frame cadence a beat already has (dozens of frames during the
+  // chart-build phase, a handful elsewhere) rather than subdividing beats further to chase a
+  // perfectly smooth curve -- the OOM history in this file is exactly why frame count stays fixed.
+  const PULSE_PERIOD_MS = 1800;
+  let clockMs = 0;
   function* pushFrames(holdMs, reveal) {
-    yield { svg: highlightSvg(highlight, reveal), holdMs };
+    const liveDotOpacity = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin((clockMs / PULSE_PERIOD_MS) * 2 * Math.PI));
+    clockMs += holdMs;
+    yield { svg: highlightSvg(highlight, { ...reveal, liveDotOpacity }), holdMs };
   }
 
   // Small -> overshoot -> settle, matching buildPromoRevealFrames' own "pop" technique -- each
@@ -1006,8 +1041,10 @@ function buildYoutubeCaption(highlight) {
 
   // No hashtag in the title -- current YouTube Shorts SEO guidance is to keep the title clean and
   // keyword-focused and put hashtags in the description instead, where the first three also
-  // surface as clickable links above the title anyway. #Shorts still appears once, in the
-  // description's hashtag line below, not duplicated here.
+  // surface as clickable links above the title anyway. #crypto/#ticker/#cryptotrading lead (the
+  // actual discovery-driving tags) with #Shorts last -- it only needs to appear somewhere in the
+  // description to satisfy Shorts categorization, so the more valuable tags get the "first three"
+  // clickable-link treatment instead.
   const title = `${highlight.ticker} ${pctText} — ${highlight.badgeText}`.slice(0, 100);
 
   const description = [
@@ -1017,7 +1054,7 @@ function buildYoutubeCaption(highlight) {
     "",
     `Real scans, real signals -- not financial advice. Join the Discord: ${DISCORD_INVITE_URL}`,
     "",
-    `#Shorts #crypto #${tickerLower} #cryptotrading`
+    `#crypto #${tickerLower} #cryptotrading #Shorts`
   ].join("\n");
 
   return { title, description };
