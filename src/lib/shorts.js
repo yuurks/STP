@@ -503,6 +503,17 @@ function cardSvg({
   `;
 }
 
+// Wraps markup in a scale transform centered on (cx,cy) -- the same "pop in" technique
+// buildPromoRevealFrames used (small -> overshoot -> settle) for the promo video, reused here so
+// each piece of the hero card (topbar, badge/ticker, price line, CTA) actually animates into place
+// during the reveal video instead of snapping from invisible to fully shown in one frame cut.
+// scale === 1 skips the wrapper entirely, so the static image (which never passes a reveal object,
+// hence never a non-1 scale) renders byte-for-byte the same as before this existed.
+function popGroup(cx, cy, scale, content) {
+  if (scale === 1) return content;
+  return `<g transform="translate(${cx.toFixed(1)},${cy.toFixed(1)}) scale(${scale.toFixed(3)}) translate(${(-cx).toFixed(1)},${(-cy).toFixed(1)})">${content}</g>`;
+}
+
 // A faithful port of the "Option A -- Glow" card from the shorts-redesign-concept comparison
 // artifact -- same visual language (verified badge, huge glow-shadowed percentage, translucent
 // bordered chart panel, cyan entry marker, gradient CTA folded into the card itself), but with the
@@ -525,6 +536,12 @@ function heroCardSvg({
   const showPriceLine = reveal?.showPriceLine ?? true;
   const showChart = reveal?.showChart ?? true;
   const chartRevealCount = reveal?.chartRevealCount;
+  // Pop-in scale for each piece as it first appears (see popGroup) -- 1 (settled) unless a reveal
+  // frame is mid-pop for that specific piece.
+  const topbarScale = reveal?.topbarScale ?? 1;
+  const badgeTickerScale = reveal?.badgeTickerScale ?? 1;
+  const priceScale = reveal?.priceScale ?? 1;
+  const ctaScale = reveal?.ctaScale ?? 1;
   const showMarker = isVerified && (reveal?.showEntryMarker ?? true);
   const showCTA = reveal?.showCTA ?? true;
 
@@ -576,10 +593,9 @@ function heroCardSvg({
   // card at all, but folded inside this card's bottom rather than living outside its border, so
   // the card's own edge can run all the way to the canvas edge with nothing floating below it.
   // Order top-to-bottom: metaLine (real, factual provenance -- gets its own line right under the
-  // button) then the two disclaimer/legal lines grouped together beneath it, not sandwiched apart
-  // from each other by the metaLine.
-  const legalY = y + h - 40;
-  const disclaimerY = legalY - 34;
+  // button) then the single disclaimer line beneath it. (A third "past movement" legal line used
+  // to run below this -- dropped per feedback, keeping just the one disclaimer.)
+  const disclaimerY = y + h - 40;
   // ctaH matches the artifact's own button height (14px padding top/bottom + ~16px line-height,
   // scaled) -- the first port used a much shorter, guessed height.
   const ctaH = 130;
@@ -633,37 +649,36 @@ function heroCardSvg({
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="65" fill="url(#${bgId}cyanTint)"/>
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="65" fill="none" stroke="#1c2b25" stroke-width="1.5"/>
 
-    ${showTopbar ? `
+    ${showTopbar ? popGroup(x + w / 2, topbarIconY + 32, topbarScale, `
     <clipPath id="topbarLogoClip_${x}_${y}"><rect x="${x + pad}" y="${topbarIconY}" width="${topbarIconSize}" height="${topbarIconSize}" rx="18"/></clipPath>
     <image href="${logoSrc()}" x="${x + pad}" y="${topbarIconY}" width="${topbarIconSize}" height="${topbarIconSize}" clip-path="url(#topbarLogoClip_${x}_${y})" filter="url(#${glowId})"/>
     <text x="${x + pad + topbarIconSize + 20}" y="${topbarIconY + 42}" font-family="DejaVu Sans" font-size="33" font-weight="800" letter-spacing="6" fill="#93a89e">STP · SIGNAL DECK</text>
     <circle cx="${liveDotCx}" cy="${liveDotCy}" r="10.5" fill="${GLOW_GREEN_LIGHT}" filter="url(#${glowId})"/>
-    ` : ""}
+    `) : ""}
 
-    ${showBadge ? `
+    ${showBadge ? popGroup(x + pad + 220, y + 240, badgeTickerScale, `
     <rect x="${x + pad}" y="${y + 205}" width="440" height="70" rx="35" fill="rgba(79,195,247,0.12)" stroke="${TRUST_CYAN}" stroke-opacity="0.4" stroke-width="1.5"/>
     <text x="${x + pad + 28}" y="${y + 250}" font-family="DejaVu Sans" font-size="28" font-weight="800" letter-spacing="1.5" fill="${TRUST_CYAN}">✓ VERIFIED REAL CALL</text>
-    ` : ""}
+    `) : ""}
 
-    ${showTicker ? `<text x="${x + pad}" y="${y + 368}" font-family="DejaVu Sans" font-size="64" font-weight="700" letter-spacing="-1" fill="#93a89e">${escapeXml(tickerDisplay)}</text>` : ""}
+    ${showTicker ? popGroup(x + pad + 100, y + 340, badgeTickerScale, `<text x="${x + pad}" y="${y + 368}" font-family="DejaVu Sans" font-size="64" font-weight="700" letter-spacing="-1" fill="#93a89e">${escapeXml(tickerDisplay)}</text>`) : ""}
 
     ${showPct ? `
     <ellipse cx="${x + pad + 300}" cy="${(y + 495).toFixed(1)}" rx="400" ry="200" fill="url(#${haloId})"/>
     <text x="${x + pad}" y="${y + 555}" font-family="DejaVu Sans" font-size="172" font-weight="900" letter-spacing="-6" fill="${GLOW_GREEN_LIGHT}" filter="url(#${pctGlowId})">${pctText}</text>
     ` : ""}
 
-    ${showPriceLine ? `<text x="${x + pad}" y="${y + 655}" xml:space="preserve" font-family="DejaVu Sans" font-size="39" font-weight="700" fill="#93a89e">${escapeXml(entryLabel)} <tspan fill="#f2f7f4">${escapeXml(openPrice)}</tspan><tspan fill="${GLOW_GREEN}"> → </tspan>Now <tspan fill="#f2f7f4">${escapeXml(nowPrice)}</tspan></text>` : ""}
+    ${showPriceLine ? popGroup(x + pad + 150, y + 640, priceScale, `<text x="${x + pad}" y="${y + 655}" xml:space="preserve" font-family="DejaVu Sans" font-size="39" font-weight="700" fill="#93a89e">${escapeXml(entryLabel)} <tspan fill="#f2f7f4">${escapeXml(openPrice)}</tspan><tspan fill="${GLOW_GREEN}"> → </tspan>Now <tspan fill="#f2f7f4">${escapeXml(nowPrice)}</tspan></text>`) : ""}
 
     ${showChart ? `<rect x="${panelX}" y="${panelY}" width="${panelW}" height="${panelBottom - panelY}" rx="47" fill="rgba(255,255,255,0.025)" stroke="${GLOW_GREEN}" stroke-opacity="0.18" stroke-width="2"/>` : ""}
     ${frame ? frame.draw : ""}
 
-    ${showCTA ? `
+    ${showCTA ? popGroup(x + w / 2, ctaY + ctaH / 2, ctaScale, `
     <rect x="${x + pad}" y="${ctaY}" width="${w - pad * 2}" height="${ctaH}" rx="65" fill="url(#${ctaId})" filter="url(#${ctaGlowId})"/>
     <text x="${x + w / 2}" y="${ctaY + 80}" font-family="DejaVu Sans" font-size="42" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
     ${metaLine ? `<text x="${x + w / 2}" y="${metaLineY}" font-family="DejaVu Sans" font-size="22" font-weight="700" fill="#93a89e" text-anchor="middle">${escapeXml(metaLine)}</text>` : ""}
     <text x="${x + w / 2}" y="${disclaimerY}" font-family="DejaVu Sans" font-size="28" font-weight="700" fill="#56685e" text-anchor="middle">Technical pattern data, not financial advice.</text>
-    <text x="${x + w / 2}" y="${legalY}" font-family="DejaVu Sans" font-size="19" font-weight="700" fill="#56685e" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
-    ` : ""}
+    `) : ""}
   `;
 }
 
@@ -854,6 +869,20 @@ function* buildRevealFrames(highlight) {
     yield { svg: highlightSvg(highlight, reveal), holdMs };
   }
 
+  // Small -> overshoot -> settle, matching buildPromoRevealFrames' own "pop" technique -- each
+  // piece of the card (topbar, badge/ticker, price line, CTA) actually animates into place instead
+  // of snapping from invisible to fully shown in one frame cut. scaleKey names which of
+  // heroCardSvg's own *Scale reveal fields this beat is animating.
+  const POP_SCALES = [0.7, 1.15, 1.0];
+  const POP_MS = 90;
+  function* pushPop(totalMs, reveal, scaleKey) {
+    for (const scale of POP_SCALES) {
+      yield* pushFrames(POP_MS, { ...reveal, [scaleKey]: scale });
+    }
+    const settledMs = totalMs - POP_MS * POP_SCALES.length;
+    if (settledMs > 0) yield* pushFrames(settledMs, { ...reveal, [scaleKey]: 1.0 });
+  }
+
   const bare = { showCard: false };
   const cardAppears = { showCard: true, showTopbar: false, showTag: false, showTicker: false, showPct: false, showPriceLine: false, showChart: false, showEntryMarker: false, showCTA: false };
   const withTopbar = { ...cardAppears, showTopbar: true };
@@ -861,8 +890,8 @@ function* buildRevealFrames(highlight) {
 
   yield* pushFrames(300, bare);
   yield* pushFrames(600, cardAppears);
-  yield* pushFrames(700, withTopbar);
-  yield* pushFrames(550, withTickerCard);
+  yield* pushPop(700, withTopbar, "topbarScale");
+  yield* pushPop(550, withTickerCard, "badgeTickerScale");
 
   // Percentage counts up over 6 steps rather than jumping straight to the final value -- a count-
   // up reads as "this is being calculated," which is a better fit for a real-data card than an
@@ -873,7 +902,7 @@ function* buildRevealFrames(highlight) {
   }
 
   const withPriceLine = { ...withTickerCard, showPct: true, pctFraction: 1, showPriceLine: true };
-  yield* pushFrames(550, withPriceLine);
+  yield* pushPop(550, withPriceLine, "priceScale");
 
   // Each candle (or line point) gets its own mini entrance instead of popping in fully formed:
   // chartRevealCount is fractional across CHART_GROWTH_SUBSTEPS sub-frames per step, and
@@ -894,12 +923,13 @@ function* buildRevealFrames(highlight) {
     revealedSoFar = target;
   }
 
+  const withChart = { ...withPriceLine, showChart: true, showCTA: false };
   const elapsedBeforeFinal = 300 + 600 + 700 + 550 + 1200 + 550 + CHART_REVEAL_MS;
   if (showEntryMarker) {
-    yield* pushFrames(400, { ...withPriceLine, showChart: true, showEntryMarker: true });
-    yield* pushFrames(REVEAL_VIDEO_MS - elapsedBeforeFinal - 400, undefined); // undefined reveal = everything shown, same as the real static image
+    yield* pushFrames(400, { ...withChart, showEntryMarker: true });
+    yield* pushPop(REVEAL_VIDEO_MS - elapsedBeforeFinal - 400, { ...withChart, showEntryMarker: true, showCTA: true }, "ctaScale");
   } else {
-    yield* pushFrames(REVEAL_VIDEO_MS - elapsedBeforeFinal, undefined);
+    yield* pushPop(REVEAL_VIDEO_MS - elapsedBeforeFinal, { ...withChart, showCTA: true }, "ctaScale");
   }
 }
 
