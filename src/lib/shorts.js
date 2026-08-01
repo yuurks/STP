@@ -207,10 +207,11 @@ const GLOW_GREEN = "#06e02d";
 // fill (see heroCardSvg), matching the artifact's --accent-glow. GLOW_GREEN itself stays reserved
 // for the halo/blur behind it, exactly like the artifact's two-tone glow.
 const GLOW_GREEN_LIGHT = "#6bf046";
-// A third, distinct accent reserved for exactly one thing: the "Verified" trust badge on a real,
-// logged /shorts call -- never reused elsewhere, so it stays legible as "this one specific claim
-// is verified" rather than blending into the page's green.
-const TRUST_CYAN = "#4fd6ff";
+// A third, distinct accent reserved for exactly one thing: the "Verified" trust badge (and, in
+// heroCardSvg, the entry marker) on a real, logged /shorts call -- never reused elsewhere, so it
+// stays legible as "this one specific claim is verified" rather than blending into the page's
+// green. Exact value matches the artifact's --cyan, not a rounded approximation.
+const TRUST_CYAN = "#4fc3f7";
 
 function escapeXml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c]));
@@ -377,13 +378,16 @@ function entryMarkerSvg(entryX, entryY, frameBottomY) {
 // else in the app. Kept as a separate function rather than a color parameter on entryMarkerSvg so
 // the original red marker (used by the dual-card dev format) is never at risk of accidentally
 // changing color too.
-function entryMarkerCyanSvg(entryX, entryY, frameBottomY) {
+// glowId, when given, applies the same soft glow the artifact's ".entry { box-shadow: 0 0 12px }"
+// gives its marker -- optional (defaults to none) so this stays a drop-in match for the plain
+// entryMarkerSvg() call signature wherever a caller doesn't have a glow filter defined.
+function entryMarkerCyanSvg(entryX, entryY, frameBottomY, glowId) {
   const color = TRUST_CYAN;
+  const glowAttr = glowId ? ` filter="url(#${glowId})"` : "";
   return (
     `<line x1="${entryX.toFixed(1)}" y1="${entryY.toFixed(1)}" x2="${entryX.toFixed(1)}" y2="${frameBottomY.toFixed(1)}" stroke="${color}" stroke-width="2" stroke-dasharray="5,5" stroke-opacity="0.45"/>` +
-    `<circle cx="${entryX.toFixed(1)}" cy="${entryY.toFixed(1)}" r="26" fill="${color}" fill-opacity="0.18"/>` +
-    `<circle cx="${entryX.toFixed(1)}" cy="${entryY.toFixed(1)}" r="15" fill="rgba(79,214,255,0.25)" stroke="${color}" stroke-width="4"/>` +
-    `<text x="${entryX.toFixed(1)}" y="${(entryY - 24).toFixed(1)}" font-family="DejaVu Sans" font-size="19" font-weight="800" letter-spacing="0.5" fill="${color}" text-anchor="middle">BUY</text>`
+    `<circle cx="${entryX.toFixed(1)}" cy="${entryY.toFixed(1)}" r="18" fill="rgba(79,195,247,0.25)" stroke="${color}" stroke-width="7"${glowAttr}/>` +
+    `<text x="${entryX.toFixed(1)}" y="${(entryY - 30).toFixed(1)}" font-family="DejaVu Sans" font-size="27" font-weight="800" letter-spacing="0.5" fill="${color}" text-anchor="middle">BUY</text>`
   );
 }
 
@@ -513,43 +517,75 @@ function heroCardSvg({
   // role the artifact's .panel plays around its (fixed, illustrative) bars.
   const panelX = x + pad, panelW = w - pad * 2;
   const panelY = y + 766, panelBottom = y + h - 380;
-  const panelPad = 24;
+  const panelPad = 47; // artifact's .panel padding (18px, scaled)
   const chartX = panelX + panelPad, chartW = panelW - panelPad * 2;
   const chartY = panelY + panelPad + 40; // extra top offset clears chartFrame's own RANGE label
   const chartH = panelBottom - panelPad - chartY;
-
-  const useCandles = Array.isArray(ohlc) && ohlc.length >= 2;
-  const frame = !showChart ? null : (useCandles
-    ? (() => {
-        const c = candlePaths(ohlc, chartX, chartY, chartW, chartH, entryIndex, entryPriceRaw, chartRevealCount);
-        return { ...c, draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max) + c.candles + (showMarker ? entryMarkerCyanSvg(c.entryX, c.entryY, chartY + chartH) : "") };
-      })()
-    : (() => { const c = chartPaths(closes, chartX, chartY, chartW, chartH, chartRevealCount); return {
-        ...c,
-        draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max) +
-          `<path d="${c.area}" fill="${COLORS.winnerFill}"/>` +
-          `<path d="${c.line}" fill="none" stroke="${accent}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>` +
-          (showMarker ? entryMarkerCyanSvg(c.entryX, c.entryY, chartY + chartH) : "") +
-          (c.fullyRevealed ? `<circle cx="${c.lastX.toFixed(1)}" cy="${c.lastY.toFixed(1)}" r="9" fill="${accent}"/>` : "")
-      }; })());
 
   const pctText = `${pctChange >= 0 ? "+" : ""}${(pctChange * pctFraction).toFixed(1)}%`;
   // "WIF/USD" -> "WIF / USD" -- display-only spacing to match the artifact's ticker exactly; the
   // real symbol string (used for lookups/logging elsewhere) never gains the spaces.
   const tickerDisplay = ticker.replace(/\//g, " / ");
+  // Two glow strengths, matching the artifact's own split: everything EXCEPT the percentage uses a
+  // single moderate blur (its various box-shadow blurs all cluster around 8-14px at the artifact's
+  // own 337px scale); the percentage alone gets a much bigger two-layer glow (text-shadow: 0 0 30px,
+  // 0 0 70px) because the artifact deliberately makes it the one dramatic element on the card.
+  // Both are scaled by the same ~2.97x this whole card is scaled by (1000px card / 337px artifact).
   const glowId = `heroGlow_${x}_${y}`;
+  const pctGlowId = `heroPctGlow_${x}_${y}`;
+  const ctaGlowId = `heroCtaGlow_${x}_${y}`;
   const haloId = `heroHalo_${x}_${y}`;
   const ctaId = `heroCta_${x}_${y}`;
+  const bgId = `heroBg_${x}_${y}`;
 
-  const ctaY = y + h - 170, ctaH = 90;
+  // Chart itself gets the same soft glow as the artifact's up-bars (box-shadow: 0 0 10px) --
+  // wrapped around the whole candle/line group rather than only the up-colored pieces individually
+  // (candlePaths/chartPaths return one already-concatenated markup string per call, shared with the
+  // dual-card format, so splitting by color here isn't worth the risk to that shared code).
+  const useCandles = Array.isArray(ohlc) && ohlc.length >= 2;
+  const frame = !showChart ? null : (useCandles
+    ? (() => {
+        const c = candlePaths(ohlc, chartX, chartY, chartW, chartH, entryIndex, entryPriceRaw, chartRevealCount);
+        return { ...c, draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max) + `<g filter="url(#${glowId})">${c.candles}</g>` + (showMarker ? entryMarkerCyanSvg(c.entryX, c.entryY, chartY + chartH, glowId) : "") };
+      })()
+    : (() => { const c = chartPaths(closes, chartX, chartY, chartW, chartH, chartRevealCount); return {
+        ...c,
+        draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max) +
+          `<path d="${c.area}" fill="${COLORS.winnerFill}"/>` +
+          `<path d="${c.line}" fill="none" stroke="${accent}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" filter="url(#${glowId})"/>` +
+          (showMarker ? entryMarkerCyanSvg(c.entryX, c.entryY, chartY + chartH, glowId) : "") +
+          (c.fullyRevealed ? `<circle cx="${c.lastX.toFixed(1)}" cy="${c.lastY.toFixed(1)}" r="9" fill="${accent}"/>` : "")
+      }; })());
+
+  // bottom:40px in the artifact's own .cta rule, scaled -- the CTA block (button + gap +
+  // disclaimer) sits with its own bottom edge this far above the card's bottom edge.
+  const ctaBottomMargin = 119;
+  const ctaH = 90;
+  const disclaimerY = y + h - ctaBottomMargin;
+  const ctaY = disclaimerY - 34 - ctaH;
   const topbarIconSize = 65, topbarIconY = y + 59;
   const liveDotCx = x + w - pad - 10, liveDotCy = topbarIconY + 32;
 
   return `
     <defs>
-      <filter id="${glowId}" x="-50%" y="-50%" width="200%" height="200%">
-        <feGaussianBlur stdDeviation="12" result="blur"/>
+      <filter id="${glowId}" x="-60%" y="-60%" width="220%" height="220%">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="18" result="rawBlur"/>
+        <feColorMatrix in="rawBlur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.55 0" result="blur"/>
         <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+      <filter id="${pctGlowId}" x="-60%" y="-100%" width="220%" height="300%">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="55" result="wideBlur"/>
+        <feColorMatrix in="wideBlur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.3 0" result="wide"/>
+        <feGaussianBlur in="SourceGraphic" stdDeviation="24" result="tightBlur"/>
+        <feColorMatrix in="tightBlur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.65 0" result="tight"/>
+        <feMerge><feMergeNode in="wide"/><feMergeNode in="tight"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+      <filter id="${ctaGlowId}" x="-30%" y="-60%" width="160%" height="260%">
+        <feGaussianBlur in="SourceAlpha" stdDeviation="18" result="blur"/>
+        <feOffset in="blur" dx="0" dy="20" result="offsetBlur"/>
+        <feFlood flood-color="${COLORS.cta}" flood-opacity="0.5" result="color"/>
+        <feComposite in="color" in2="offsetBlur" operator="in" result="shadow"/>
+        <feMerge><feMergeNode in="shadow"/><feMergeNode in="SourceGraphic"/></feMerge>
       </filter>
       <radialGradient id="${haloId}" cx="50%" cy="50%" r="50%">
         <stop offset="0%" stop-color="${GLOW_GREEN}" stop-opacity="0.4"/>
@@ -559,38 +595,50 @@ function heroCardSvg({
         <stop offset="0%" stop-color="#6c78ff"/>
         <stop offset="100%" stop-color="${COLORS.cta}"/>
       </linearGradient>
+      <radialGradient id="${bgId}greenTint" cx="25%" cy="8%" r="55%">
+        <stop offset="0%" stop-color="${GLOW_GREEN}" stop-opacity="0.16"/>
+        <stop offset="100%" stop-color="${GLOW_GREEN}" stop-opacity="0"/>
+      </radialGradient>
+      <radialGradient id="${bgId}cyanTint" cx="85%" cy="95%" r="45%">
+        <stop offset="0%" stop-color="${TRUST_CYAN}" stop-opacity="0.10"/>
+        <stop offset="100%" stop-color="${TRUST_CYAN}" stop-opacity="0"/>
+      </radialGradient>
     </defs>
 
-    <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="26" fill="none" stroke="${GLOW_GREEN}" stroke-opacity="0.3" stroke-width="7" filter="url(#${glowId})"/>
-    <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="26" fill="${COLORS.card}" stroke="${GLOW_GREEN}" stroke-opacity="0.35" stroke-width="1.5"/>
+    <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="65" fill="none" stroke="${GLOW_GREEN}" stroke-opacity="0.3" stroke-width="7" filter="url(#${glowId})"/>
+    <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="65" fill="#070b0a"/>
+    <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="65" fill="url(#${bgId}greenTint)"/>
+    <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="65" fill="url(#${bgId}cyanTint)"/>
+    <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="65" fill="none" stroke="#1c2b25" stroke-width="1.5"/>
 
     ${showTopbar ? `
     <clipPath id="topbarLogoClip_${x}_${y}"><rect x="${x + pad}" y="${topbarIconY}" width="${topbarIconSize}" height="${topbarIconSize}" rx="18"/></clipPath>
-    <image href="${logoSrc()}" x="${x + pad}" y="${topbarIconY}" width="${topbarIconSize}" height="${topbarIconSize}" clip-path="url(#topbarLogoClip_${x}_${y})"/>
-    <text x="${x + pad + topbarIconSize + 20}" y="${topbarIconY + 42}" font-family="DejaVu Sans" font-size="28" font-weight="800" letter-spacing="4" fill="${COLORS.textSecondary}">STP · SIGNAL DECK</text>
-    <circle cx="${liveDotCx}" cy="${liveDotCy}" r="9" fill="${GLOW_GREEN_LIGHT}" filter="url(#${glowId})"/>
+    <image href="${logoSrc()}" x="${x + pad}" y="${topbarIconY}" width="${topbarIconSize}" height="${topbarIconSize}" clip-path="url(#topbarLogoClip_${x}_${y})" filter="url(#${glowId})"/>
+    <text x="${x + pad + topbarIconSize + 20}" y="${topbarIconY + 42}" font-family="DejaVu Sans" font-size="33" font-weight="800" letter-spacing="6" fill="#93a89e">STP · SIGNAL DECK</text>
+    <circle cx="${liveDotCx}" cy="${liveDotCy}" r="10.5" fill="${GLOW_GREEN_LIGHT}" filter="url(#${glowId})"/>
     ` : ""}
 
     ${showBadge ? `
-    <rect x="${x + pad}" y="${y + 190}" width="440" height="70" rx="35" fill="rgba(79,214,255,0.12)" stroke="${TRUST_CYAN}" stroke-opacity="0.4" stroke-width="1.5"/>
+    <rect x="${x + pad}" y="${y + 190}" width="440" height="70" rx="35" fill="rgba(79,195,247,0.12)" stroke="${TRUST_CYAN}" stroke-opacity="0.4" stroke-width="1.5"/>
     <text x="${x + pad + 28}" y="${y + 235}" font-family="DejaVu Sans" font-size="28" font-weight="800" letter-spacing="1.5" fill="${TRUST_CYAN}">✓ VERIFIED REAL CALL</text>
     ` : ""}
 
-    ${showTicker ? `<text x="${x + pad}" y="${y + 350}" font-family="DejaVu Sans" font-size="64" font-weight="700" letter-spacing="-1" fill="${COLORS.textSecondary}">${escapeXml(tickerDisplay)}</text>` : ""}
+    ${showTicker ? `<text x="${x + pad}" y="${y + 350}" font-family="DejaVu Sans" font-size="64" font-weight="700" letter-spacing="-1" fill="#93a89e">${escapeXml(tickerDisplay)}</text>` : ""}
 
     ${showPct ? `
     <ellipse cx="${x + pad + 300}" cy="${(y + 470).toFixed(1)}" rx="400" ry="200" fill="url(#${haloId})"/>
-    <text x="${x + pad}" y="${y + 530}" font-family="DejaVu Sans" font-size="172" font-weight="900" letter-spacing="-6" fill="${GLOW_GREEN_LIGHT}" filter="url(#${glowId})">${pctText}</text>
+    <text x="${x + pad}" y="${y + 530}" font-family="DejaVu Sans" font-size="172" font-weight="900" letter-spacing="-6" fill="${GLOW_GREEN_LIGHT}" filter="url(#${pctGlowId})">${pctText}</text>
     ` : ""}
 
-    ${showPriceLine ? `<text x="${x + pad}" y="${y + 615}" xml:space="preserve" font-family="DejaVu Sans" font-size="39" fill="${COLORS.textSecondary}">${escapeXml(entryLabel)} <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(openPrice)}</tspan><tspan fill="${GLOW_GREEN_LIGHT}"> → </tspan>Now <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(nowPrice)}</tspan></text>` : ""}
+    ${showPriceLine ? `<text x="${x + pad}" y="${y + 615}" xml:space="preserve" font-family="DejaVu Sans" font-size="39" fill="#93a89e">${escapeXml(entryLabel)} <tspan font-weight="700" fill="#f2f7f4">${escapeXml(openPrice)}</tspan><tspan fill="${GLOW_GREEN}"> → </tspan>Now <tspan font-weight="700" fill="#f2f7f4">${escapeXml(nowPrice)}</tspan></text>` : ""}
 
+    ${showChart ? `<rect x="${panelX}" y="${panelY}" width="${panelW}" height="${panelBottom - panelY}" rx="47" fill="rgba(255,255,255,0.025)" stroke="${GLOW_GREEN}" stroke-opacity="0.18" stroke-width="2"/>` : ""}
     ${frame ? frame.draw : ""}
 
     ${showCTA ? `
-    <rect x="${x + pad}" y="${ctaY}" width="${w - pad * 2}" height="${ctaH}" rx="45" fill="url(#${ctaId})"/>
+    <rect x="${x + pad}" y="${ctaY}" width="${w - pad * 2}" height="${ctaH}" rx="45" fill="url(#${ctaId})" filter="url(#${ctaGlowId})"/>
     <text x="${x + w / 2}" y="${ctaY + 58}" font-family="DejaVu Sans" font-size="34" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
-    <text x="${x + w / 2}" y="${ctaY + ctaH + 40}" font-family="DejaVu Sans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Technical pattern data, not financial advice.</text>
+    <text x="${x + w / 2}" y="${disclaimerY}" font-family="DejaVu Sans" font-size="22" fill="#56685e" text-anchor="middle">Technical pattern data, not financial advice.</text>
     ` : ""}
   `;
 }
