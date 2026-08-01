@@ -212,11 +212,13 @@ const GLOW_GREEN_LIGHT = "#6bf046";
 // stays legible as "this one specific claim is verified" rather than blending into the page's
 // green. Exact value matches the artifact's --cyan, not a rounded approximation.
 const TRUST_CYAN = "#4fc3f7";
-// heroCardSvg's own chart down-color, matching the artifact's ".chart i.down" exactly -- a muted
-// pink-red, not the app's usual (brighter, CVD-validated) COLORS.loser. Decorative-only, same
-// reasoning as GLOW_GREEN above: this chart's colors are one card's atmosphere, not a place that
-// needs to clear the CVD-safety bar the shared COLORS palette is validated against.
-const HERO_CHART_DOWN = "rgba(255,84,112,0.55)";
+// heroCardSvg's own chart down-color -- started as the artifact's muted ".chart i.down" exactly,
+// brightened/pinked up and made more opaque per feedback so it actually reads as a color (and
+// glows visibly once wrapped in the shared blur filter) instead of a dark, half-transparent red.
+// Decorative-only, same reasoning as GLOW_GREEN above: this chart's colors are one card's
+// atmosphere, not a place that needs to clear the CVD-safety bar the shared COLORS palette is
+// validated against.
+const HERO_CHART_DOWN = "rgba(255,92,144,0.85)";
 
 function escapeXml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c]));
