@@ -592,9 +592,9 @@ function heroCardSvg({
       </filter>
       <filter id="${pctGlowId}" x="-60%" y="-100%" width="220%" height="300%">
         <feGaussianBlur in="SourceGraphic" stdDeviation="55" result="wideBlur"/>
-        <feColorMatrix in="wideBlur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.3 0" result="wide"/>
+        <feColorMatrix in="wideBlur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.22 0" result="wide"/>
         <feGaussianBlur in="SourceGraphic" stdDeviation="24" result="tightBlur"/>
-        <feColorMatrix in="tightBlur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.65 0" result="tight"/>
+        <feColorMatrix in="tightBlur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.5 0" result="tight"/>
         <feMerge><feMergeNode in="wide"/><feMergeNode in="tight"/><feMergeNode in="SourceGraphic"/></feMerge>
       </filter>
       <filter id="${ctaGlowId}" x="-30%" y="-60%" width="160%" height="260%">
