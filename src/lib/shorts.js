@@ -610,8 +610,8 @@ function heroCardSvg({
         <stop offset="0%" stop-color="#6c78ff"/>
         <stop offset="100%" stop-color="${COLORS.cta}"/>
       </linearGradient>
-      <radialGradient id="${bgId}greenTint" cx="25%" cy="8%" r="65%">
-        <stop offset="0%" stop-color="${GLOW_GREEN}" stop-opacity="0.34"/>
+      <radialGradient id="${bgId}greenTint" cx="25%" cy="8%" r="85%">
+        <stop offset="0%" stop-color="${GLOW_GREEN}" stop-opacity="0.26"/>
         <stop offset="100%" stop-color="${GLOW_GREEN}" stop-opacity="0"/>
       </radialGradient>
       <radialGradient id="${bgId}cyanTint" cx="85%" cy="95%" r="45%">
