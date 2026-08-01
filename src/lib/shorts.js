@@ -212,6 +212,11 @@ const GLOW_GREEN_LIGHT = "#6bf046";
 // stays legible as "this one specific claim is verified" rather than blending into the page's
 // green. Exact value matches the artifact's --cyan, not a rounded approximation.
 const TRUST_CYAN = "#4fc3f7";
+// heroCardSvg's own chart down-color, matching the artifact's ".chart i.down" exactly -- a muted
+// pink-red, not the app's usual (brighter, CVD-validated) COLORS.loser. Decorative-only, same
+// reasoning as GLOW_GREEN above: this chart's colors are one card's atmosphere, not a place that
+// needs to clear the CVD-safety bar the shared COLORS palette is validated against.
+const HERO_CHART_DOWN = "rgba(255,84,112,0.55)";
 
 function escapeXml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c]));
@@ -281,7 +286,13 @@ function chartPaths(closes, x, y, w, h, visibleCount) {
 // its own vertical center outward (60% of full height, in that example) instead of popping in
 // fully formed, so each new candle in the reveal video has a real entrance instead of appearing
 // abruptly.
-function candlePaths(ohlc, x, y, w, h, entryIndex, entryPrice, visibleCount) {
+// upColor/downColor default to the app's CVD-validated COLORS.winner/loser (every other caller of
+// this shared function, e.g. the dual-card dev format, gets byte-identical behavior) -- heroCardSvg
+// is the only caller that overrides them, to match the shorts-redesign-concept artifact's own
+// chart colors (a brighter green, a muted pink-red) exactly rather than the app's accessibility
+// palette, since that's a purely decorative/atmospheric choice on this one card, not a place any
+// color itself carries meaning beyond "up" vs "down."
+function candlePaths(ohlc, x, y, w, h, entryIndex, entryPrice, visibleCount, upColor = COLORS.winner, downColor = COLORS.loser) {
   const pad = 6;
   const values = ohlc.flatMap(c => [c.high, c.low]);
   const min = Math.min(...values, entryPrice), max = Math.max(...values, entryPrice);
@@ -299,7 +310,7 @@ function candlePaths(ohlc, x, y, w, h, entryIndex, entryPrice, visibleCount) {
   const candles = ohlc.slice(0, drawCount).map((c, i) => {
     const cx = slotX(i);
     const isUp = c.close >= c.open;
-    const color = isUp ? COLORS.winner : COLORS.loser;
+    const color = isUp ? upColor : downColor;
     let wickTop = toY(c.high), wickBottom = toY(c.low);
     let bodyTop = toY(Math.max(c.open, c.close)), bodyBottom = toY(Math.min(c.open, c.close));
     if (i === fullShown && growFraction > 0) {
@@ -386,8 +397,8 @@ function entryMarkerCyanSvg(entryX, entryY, frameBottomY, glowId) {
   const glowAttr = glowId ? ` filter="url(#${glowId})"` : "";
   return (
     `<line x1="${entryX.toFixed(1)}" y1="${entryY.toFixed(1)}" x2="${entryX.toFixed(1)}" y2="${frameBottomY.toFixed(1)}" stroke="${color}" stroke-width="2" stroke-dasharray="5,5" stroke-opacity="0.45"/>` +
-    `<circle cx="${entryX.toFixed(1)}" cy="${entryY.toFixed(1)}" r="18" fill="rgba(79,195,247,0.25)" stroke="${color}" stroke-width="7"${glowAttr}/>` +
-    `<text x="${entryX.toFixed(1)}" y="${(entryY - 30).toFixed(1)}" font-family="DejaVu Sans" font-size="27" font-weight="800" letter-spacing="0.5" fill="${color}" text-anchor="middle">BUY</text>`
+    `<circle cx="${entryX.toFixed(1)}" cy="${entryY.toFixed(1)}" r="13" fill="rgba(79,195,247,0.25)" stroke="${color}" stroke-width="5"${glowAttr}/>` +
+    `<text x="${entryX.toFixed(1)}" y="${(entryY - 26).toFixed(1)}" font-family="DejaVu Sans" font-size="24" font-weight="800" letter-spacing="0.5" fill="${color}" text-anchor="middle">BUY</text>`
   );
 }
 
@@ -500,7 +511,6 @@ function heroCardSvg({
   entryIndex, entryPriceRaw, entryLabel = "Called at", isVerified, reveal
 }) {
   const pad = 65; // matches the artifact's uniform 22px inset, scaled to this card's own size
-  const accent = COLORS.winner; // still the CVD-validated color for the actual chart geometry
 
   const showTopbar = reveal?.showTopbar ?? true;
   const showBadge = (reveal?.showTag ?? true) && isVerified;
@@ -545,24 +555,26 @@ function heroCardSvg({
   const useCandles = Array.isArray(ohlc) && ohlc.length >= 2;
   const frame = !showChart ? null : (useCandles
     ? (() => {
-        const c = candlePaths(ohlc, chartX, chartY, chartW, chartH, entryIndex, entryPriceRaw, chartRevealCount);
+        const c = candlePaths(ohlc, chartX, chartY, chartW, chartH, entryIndex, entryPriceRaw, chartRevealCount, GLOW_GREEN_LIGHT, HERO_CHART_DOWN);
         return { ...c, draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max) + `<g filter="url(#${glowId})">${c.candles}</g>` + (showMarker ? entryMarkerCyanSvg(c.entryX, c.entryY, chartY + chartH, glowId) : "") };
       })()
     : (() => { const c = chartPaths(closes, chartX, chartY, chartW, chartH, chartRevealCount); return {
         ...c,
         draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max) +
-          `<path d="${c.area}" fill="${COLORS.winnerFill}"/>` +
-          `<path d="${c.line}" fill="none" stroke="${accent}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" filter="url(#${glowId})"/>` +
+          `<path d="${c.area}" fill="${GLOW_GREEN}" fill-opacity="0.16"/>` +
+          `<path d="${c.line}" fill="none" stroke="${GLOW_GREEN_LIGHT}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" filter="url(#${glowId})"/>` +
           (showMarker ? entryMarkerCyanSvg(c.entryX, c.entryY, chartY + chartH, glowId) : "") +
-          (c.fullyRevealed ? `<circle cx="${c.lastX.toFixed(1)}" cy="${c.lastY.toFixed(1)}" r="9" fill="${accent}"/>` : "")
+          (c.fullyRevealed ? `<circle cx="${c.lastX.toFixed(1)}" cy="${c.lastY.toFixed(1)}" r="9" fill="${GLOW_GREEN_LIGHT}"/>` : "")
       }; })());
 
   // bottom:40px in the artifact's own .cta rule, scaled -- the CTA block (button + gap +
-  // disclaimer) sits with its own bottom edge this far above the card's bottom edge.
+  // disclaimer) sits with its own bottom edge this far above the card's bottom edge. ctaH matches
+  // the artifact's own button height (14px padding top/bottom + ~16px line-height, scaled) -- the
+  // first port used a much shorter, guessed height.
   const ctaBottomMargin = 119;
-  const ctaH = 90;
+  const ctaH = 130;
   const disclaimerY = y + h - ctaBottomMargin;
-  const ctaY = disclaimerY - 34 - ctaH;
+  const ctaY = disclaimerY - 40 - ctaH;
   const topbarIconSize = 65, topbarIconY = y + 59;
   const liveDotCx = x + w - pad - 10, liveDotCy = topbarIconY + 32;
 
@@ -630,15 +642,15 @@ function heroCardSvg({
     <text x="${x + pad}" y="${y + 530}" font-family="DejaVu Sans" font-size="172" font-weight="900" letter-spacing="-6" fill="${GLOW_GREEN_LIGHT}" filter="url(#${pctGlowId})">${pctText}</text>
     ` : ""}
 
-    ${showPriceLine ? `<text x="${x + pad}" y="${y + 615}" xml:space="preserve" font-family="DejaVu Sans" font-size="39" fill="#93a89e">${escapeXml(entryLabel)} <tspan font-weight="700" fill="#f2f7f4">${escapeXml(openPrice)}</tspan><tspan fill="${GLOW_GREEN}"> → </tspan>Now <tspan font-weight="700" fill="#f2f7f4">${escapeXml(nowPrice)}</tspan></text>` : ""}
+    ${showPriceLine ? `<text x="${x + pad}" y="${y + 630}" xml:space="preserve" font-family="DejaVu Sans" font-size="39" fill="#93a89e">${escapeXml(entryLabel)} <tspan font-weight="700" fill="#f2f7f4">${escapeXml(openPrice)}</tspan><tspan fill="${GLOW_GREEN}"> → </tspan>Now <tspan font-weight="700" fill="#f2f7f4">${escapeXml(nowPrice)}</tspan></text>` : ""}
 
     ${showChart ? `<rect x="${panelX}" y="${panelY}" width="${panelW}" height="${panelBottom - panelY}" rx="47" fill="rgba(255,255,255,0.025)" stroke="${GLOW_GREEN}" stroke-opacity="0.18" stroke-width="2"/>` : ""}
     ${frame ? frame.draw : ""}
 
     ${showCTA ? `
-    <rect x="${x + pad}" y="${ctaY}" width="${w - pad * 2}" height="${ctaH}" rx="45" fill="url(#${ctaId})" filter="url(#${ctaGlowId})"/>
-    <text x="${x + w / 2}" y="${ctaY + 58}" font-family="DejaVu Sans" font-size="34" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
-    <text x="${x + w / 2}" y="${disclaimerY}" font-family="DejaVu Sans" font-size="22" fill="#56685e" text-anchor="middle">Technical pattern data, not financial advice.</text>
+    <rect x="${x + pad}" y="${ctaY}" width="${w - pad * 2}" height="${ctaH}" rx="65" fill="url(#${ctaId})" filter="url(#${ctaGlowId})"/>
+    <text x="${x + w / 2}" y="${ctaY + 80}" font-family="DejaVu Sans" font-size="42" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
+    <text x="${x + w / 2}" y="${disclaimerY}" font-family="DejaVu Sans" font-size="28" fill="#56685e" text-anchor="middle">Technical pattern data, not financial advice.</text>
     ` : ""}
   `;
 }
