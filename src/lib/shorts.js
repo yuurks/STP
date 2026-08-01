@@ -346,7 +346,10 @@ function candlePaths(ohlc, x, y, w, h, entryIndex, entryPrice, visibleCount, upC
 // high-top/low-bottom labels collided with either the endpoint or neighboring text depending on
 // which corner and which card size, confirmed against real renders in both directions. A single
 // line in the gap above the frame is correct regardless of trend and regardless of card height.
-function chartFrame(x, y, w, h, min, max) {
+// labelFontSize defaults to the size every other caller (the dual-card format) has always used --
+// heroCardSvg is the only caller that passes a bigger one, to match the artifact's own ".panel
+// .range" size scaled up to this card's size instead of staying at the old card's fixed size.
+function chartFrame(x, y, w, h, min, max, labelFontSize = 17) {
   const pad = 6;
   const rows = 4;
   const gridLines = Array.from({ length: rows + 1 }, (_, i) => {
@@ -355,7 +358,7 @@ function chartFrame(x, y, w, h, min, max) {
   }).join("");
 
   return (
-    `<text x="${x}" y="${(y - 8).toFixed(1)}" font-family="DejaVu Sans" font-size="17" font-weight="700" fill="${COLORS.textMuted}">RANGE ${escapeXml(formatMoney(min))} - ${escapeXml(formatMoney(max))}</text>` +
+    `<text x="${x}" y="${(y - 8).toFixed(1)}" font-family="DejaVu Sans" font-size="${labelFontSize}" font-weight="700" fill="${COLORS.textMuted}">RANGE ${escapeXml(formatMoney(min))} - ${escapeXml(formatMoney(max))}</text>` +
     `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.10)" stroke-width="1.5" rx="10"/>` +
     gridLines
   );
@@ -529,7 +532,7 @@ function heroCardSvg({
   const panelY = y + 766, panelBottom = y + h - 380;
   const panelPad = 47; // artifact's .panel padding (18px, scaled)
   const chartX = panelX + panelPad, chartW = panelW - panelPad * 2;
-  const chartY = panelY + panelPad + 40; // extra top offset clears chartFrame's own RANGE label
+  const chartY = panelY + panelPad + 55; // extra top offset clears chartFrame's own (enlarged) RANGE label
   const chartH = panelBottom - panelPad - chartY;
 
   const pctText = `${pctChange >= 0 ? "+" : ""}${(pctChange * pctFraction).toFixed(1)}%`;
@@ -556,11 +559,11 @@ function heroCardSvg({
   const frame = !showChart ? null : (useCandles
     ? (() => {
         const c = candlePaths(ohlc, chartX, chartY, chartW, chartH, entryIndex, entryPriceRaw, chartRevealCount, GLOW_GREEN_LIGHT, HERO_CHART_DOWN);
-        return { ...c, draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max) + `<g filter="url(#${glowId})">${c.candles}</g>` + (showMarker ? entryMarkerCyanSvg(c.entryX, c.entryY, chartY + chartH, glowId) : "") };
+        return { ...c, draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max, 30) + `<g filter="url(#${glowId})">${c.candles}</g>` + (showMarker ? entryMarkerCyanSvg(c.entryX, c.entryY, chartY + chartH, glowId) : "") };
       })()
     : (() => { const c = chartPaths(closes, chartX, chartY, chartW, chartH, chartRevealCount); return {
         ...c,
-        draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max) +
+        draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max, 30) +
           `<path d="${c.area}" fill="${GLOW_GREEN}" fill-opacity="0.16"/>` +
           `<path d="${c.line}" fill="none" stroke="${GLOW_GREEN_LIGHT}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" filter="url(#${glowId})"/>` +
           (showMarker ? entryMarkerCyanSvg(c.entryX, c.entryY, chartY + chartH, glowId) : "") +
@@ -607,8 +610,8 @@ function heroCardSvg({
         <stop offset="0%" stop-color="#6c78ff"/>
         <stop offset="100%" stop-color="${COLORS.cta}"/>
       </linearGradient>
-      <radialGradient id="${bgId}greenTint" cx="25%" cy="8%" r="55%">
-        <stop offset="0%" stop-color="${GLOW_GREEN}" stop-opacity="0.16"/>
+      <radialGradient id="${bgId}greenTint" cx="25%" cy="8%" r="65%">
+        <stop offset="0%" stop-color="${GLOW_GREEN}" stop-opacity="0.34"/>
         <stop offset="100%" stop-color="${GLOW_GREEN}" stop-opacity="0"/>
       </radialGradient>
       <radialGradient id="${bgId}cyanTint" cx="85%" cy="95%" r="45%">
@@ -642,7 +645,7 @@ function heroCardSvg({
     <text x="${x + pad}" y="${y + 530}" font-family="DejaVu Sans" font-size="172" font-weight="900" letter-spacing="-6" fill="${GLOW_GREEN_LIGHT}" filter="url(#${pctGlowId})">${pctText}</text>
     ` : ""}
 
-    ${showPriceLine ? `<text x="${x + pad}" y="${y + 630}" xml:space="preserve" font-family="DejaVu Sans" font-size="39" fill="#93a89e">${escapeXml(entryLabel)} <tspan font-weight="700" fill="#f2f7f4">${escapeXml(openPrice)}</tspan><tspan fill="${GLOW_GREEN}"> → </tspan>Now <tspan font-weight="700" fill="#f2f7f4">${escapeXml(nowPrice)}</tspan></text>` : ""}
+    ${showPriceLine ? `<text x="${x + pad}" y="${y + 630}" xml:space="preserve" font-family="DejaVu Sans" font-size="39" font-weight="700" fill="#93a89e">${escapeXml(entryLabel)} <tspan fill="#f2f7f4">${escapeXml(openPrice)}</tspan><tspan fill="${GLOW_GREEN}"> → </tspan>Now <tspan fill="#f2f7f4">${escapeXml(nowPrice)}</tspan></text>` : ""}
 
     ${showChart ? `<rect x="${panelX}" y="${panelY}" width="${panelW}" height="${panelBottom - panelY}" rx="47" fill="rgba(255,255,255,0.025)" stroke="${GLOW_GREEN}" stroke-opacity="0.18" stroke-width="2"/>` : ""}
     ${frame ? frame.draw : ""}
