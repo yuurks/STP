@@ -515,7 +515,7 @@ function heroCardSvg({
   x, y, w, h, ticker, pctChange, openPrice, nowPrice, closes, ohlc,
   entryIndex, entryPriceRaw, entryLabel = "Called at", isVerified, reveal, metaLine
 }) {
-  const pad = 65; // matches the artifact's uniform 22px inset, scaled to this card's own size
+  const pad = 76; // roomier than the artifact's literal 22px inset scaled -- more breathing room now that the card fills the whole frame
 
   const showTopbar = reveal?.showTopbar ?? true;
   const showBadge = (reveal?.showTag ?? true) && isVerified;
@@ -531,7 +531,7 @@ function heroCardSvg({
   // Panel occupies most of the card -- real room for the real chart, exactly the "glass panel"
   // role the artifact's .panel plays around its (fixed, illustrative) bars.
   const panelX = x + pad, panelW = w - pad * 2;
-  const panelY = y + 766, panelBottom = y + h - 380;
+  const panelY = y + 800, panelBottom = y + h - 380;
   const panelPad = 47; // artifact's .panel padding (18px, scaled)
   const chartX = panelX + panelPad, chartW = panelW - panelPad * 2;
   const chartY = panelY + panelPad + 55; // extra top offset clears chartFrame's own (enlarged) RANGE label
@@ -585,7 +585,7 @@ function heroCardSvg({
   const ctaH = 130;
   const metaLineY = disclaimerY - 40;
   const ctaY = metaLineY - 40 - ctaH;
-  const topbarIconSize = 65, topbarIconY = y + 59;
+  const topbarIconSize = 65, topbarIconY = y + 68;
   const liveDotCx = x + w - pad - 10, liveDotCy = topbarIconY + 32;
 
   return `
@@ -641,18 +641,18 @@ function heroCardSvg({
     ` : ""}
 
     ${showBadge ? `
-    <rect x="${x + pad}" y="${y + 190}" width="440" height="70" rx="35" fill="rgba(79,195,247,0.12)" stroke="${TRUST_CYAN}" stroke-opacity="0.4" stroke-width="1.5"/>
-    <text x="${x + pad + 28}" y="${y + 235}" font-family="DejaVu Sans" font-size="28" font-weight="800" letter-spacing="1.5" fill="${TRUST_CYAN}">✓ VERIFIED REAL CALL</text>
+    <rect x="${x + pad}" y="${y + 205}" width="440" height="70" rx="35" fill="rgba(79,195,247,0.12)" stroke="${TRUST_CYAN}" stroke-opacity="0.4" stroke-width="1.5"/>
+    <text x="${x + pad + 28}" y="${y + 250}" font-family="DejaVu Sans" font-size="28" font-weight="800" letter-spacing="1.5" fill="${TRUST_CYAN}">✓ VERIFIED REAL CALL</text>
     ` : ""}
 
-    ${showTicker ? `<text x="${x + pad}" y="${y + 350}" font-family="DejaVu Sans" font-size="64" font-weight="700" letter-spacing="-1" fill="#93a89e">${escapeXml(tickerDisplay)}</text>` : ""}
+    ${showTicker ? `<text x="${x + pad}" y="${y + 368}" font-family="DejaVu Sans" font-size="64" font-weight="700" letter-spacing="-1" fill="#93a89e">${escapeXml(tickerDisplay)}</text>` : ""}
 
     ${showPct ? `
-    <ellipse cx="${x + pad + 300}" cy="${(y + 470).toFixed(1)}" rx="400" ry="200" fill="url(#${haloId})"/>
-    <text x="${x + pad}" y="${y + 530}" font-family="DejaVu Sans" font-size="172" font-weight="900" letter-spacing="-6" fill="${GLOW_GREEN_LIGHT}" filter="url(#${pctGlowId})">${pctText}</text>
+    <ellipse cx="${x + pad + 300}" cy="${(y + 495).toFixed(1)}" rx="400" ry="200" fill="url(#${haloId})"/>
+    <text x="${x + pad}" y="${y + 555}" font-family="DejaVu Sans" font-size="172" font-weight="900" letter-spacing="-6" fill="${GLOW_GREEN_LIGHT}" filter="url(#${pctGlowId})">${pctText}</text>
     ` : ""}
 
-    ${showPriceLine ? `<text x="${x + pad}" y="${y + 630}" xml:space="preserve" font-family="DejaVu Sans" font-size="39" font-weight="700" fill="#93a89e">${escapeXml(entryLabel)} <tspan fill="#f2f7f4">${escapeXml(openPrice)}</tspan><tspan fill="${GLOW_GREEN}"> → </tspan>Now <tspan fill="#f2f7f4">${escapeXml(nowPrice)}</tspan></text>` : ""}
+    ${showPriceLine ? `<text x="${x + pad}" y="${y + 655}" xml:space="preserve" font-family="DejaVu Sans" font-size="39" font-weight="700" fill="#93a89e">${escapeXml(entryLabel)} <tspan fill="#f2f7f4">${escapeXml(openPrice)}</tspan><tspan fill="${GLOW_GREEN}"> → </tspan>Now <tspan fill="#f2f7f4">${escapeXml(nowPrice)}</tspan></text>` : ""}
 
     ${showChart ? `<rect x="${panelX}" y="${panelY}" width="${panelW}" height="${panelBottom - panelY}" rx="47" fill="rgba(255,255,255,0.025)" stroke="${GLOW_GREEN}" stroke-opacity="0.18" stroke-width="2"/>` : ""}
     ${frame ? frame.draw : ""}
@@ -661,8 +661,8 @@ function heroCardSvg({
     <rect x="${x + pad}" y="${ctaY}" width="${w - pad * 2}" height="${ctaH}" rx="65" fill="url(#${ctaId})" filter="url(#${ctaGlowId})"/>
     <text x="${x + w / 2}" y="${ctaY + 80}" font-family="DejaVu Sans" font-size="42" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
     ${metaLine ? `<text x="${x + w / 2}" y="${metaLineY}" font-family="DejaVu Sans" font-size="22" font-weight="700" fill="#93a89e" text-anchor="middle">${escapeXml(metaLine)}</text>` : ""}
-    <text x="${x + w / 2}" y="${disclaimerY}" font-family="DejaVu Sans" font-size="28" fill="#56685e" text-anchor="middle">Technical pattern data, not financial advice.</text>
-    <text x="${x + w / 2}" y="${legalY}" font-family="DejaVu Sans" font-size="19" fill="#56685e" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
+    <text x="${x + w / 2}" y="${disclaimerY}" font-family="DejaVu Sans" font-size="28" font-weight="700" fill="#56685e" text-anchor="middle">Technical pattern data, not financial advice.</text>
+    <text x="${x + w / 2}" y="${legalY}" font-family="DejaVu Sans" font-size="19" font-weight="700" fill="#56685e" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
     ` : ""}
   `;
 }
