@@ -575,13 +575,16 @@ function heroCardSvg({
   // Real provenance text (fired-date/source, legal disclaimer) -- not part of the artifact's own
   // card at all, but folded inside this card's bottom rather than living outside its border, so
   // the card's own edge can run all the way to the canvas edge with nothing floating below it.
+  // Order top-to-bottom: metaLine (real, factual provenance -- gets its own line right under the
+  // button) then the two disclaimer/legal lines grouped together beneath it, not sandwiched apart
+  // from each other by the metaLine.
   const legalY = y + h - 40;
-  const metaLineY = legalY - 34;
+  const disclaimerY = legalY - 34;
   // ctaH matches the artifact's own button height (14px padding top/bottom + ~16px line-height,
   // scaled) -- the first port used a much shorter, guessed height.
   const ctaH = 130;
-  const disclaimerY = metaLineY - 40;
-  const ctaY = disclaimerY - 40 - ctaH;
+  const metaLineY = disclaimerY - 40;
+  const ctaY = metaLineY - 40 - ctaH;
   const topbarIconSize = 65, topbarIconY = y + 59;
   const liveDotCx = x + w - pad - 10, liveDotCy = topbarIconY + 32;
 
@@ -657,8 +660,8 @@ function heroCardSvg({
     ${showCTA ? `
     <rect x="${x + pad}" y="${ctaY}" width="${w - pad * 2}" height="${ctaH}" rx="65" fill="url(#${ctaId})" filter="url(#${ctaGlowId})"/>
     <text x="${x + w / 2}" y="${ctaY + 80}" font-family="DejaVu Sans" font-size="42" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
-    <text x="${x + w / 2}" y="${disclaimerY}" font-family="DejaVu Sans" font-size="28" fill="#56685e" text-anchor="middle">Technical pattern data, not financial advice.</text>
     ${metaLine ? `<text x="${x + w / 2}" y="${metaLineY}" font-family="DejaVu Sans" font-size="22" font-weight="700" fill="#93a89e" text-anchor="middle">${escapeXml(metaLine)}</text>` : ""}
+    <text x="${x + w / 2}" y="${disclaimerY}" font-family="DejaVu Sans" font-size="28" fill="#56685e" text-anchor="middle">Technical pattern data, not financial advice.</text>
     <text x="${x + w / 2}" y="${legalY}" font-family="DejaVu Sans" font-size="19" fill="#56685e" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
     ` : ""}
   `;
