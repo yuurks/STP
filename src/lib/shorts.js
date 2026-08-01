@@ -511,7 +511,7 @@ function cardSvg({
 // single-card /shorts highlight (see highlightSvg).
 function heroCardSvg({
   x, y, w, h, ticker, pctChange, openPrice, nowPrice, closes, ohlc,
-  entryIndex, entryPriceRaw, entryLabel = "Called at", isVerified, reveal
+  entryIndex, entryPriceRaw, entryLabel = "Called at", isVerified, reveal, metaLine
 }) {
   const pad = 65; // matches the artifact's uniform 22px inset, scaled to this card's own size
 
@@ -570,13 +570,15 @@ function heroCardSvg({
           (c.fullyRevealed ? `<circle cx="${c.lastX.toFixed(1)}" cy="${c.lastY.toFixed(1)}" r="9" fill="${GLOW_GREEN_LIGHT}"/>` : "")
       }; })());
 
-  // bottom:40px in the artifact's own .cta rule, scaled -- the CTA block (button + gap +
-  // disclaimer) sits with its own bottom edge this far above the card's bottom edge. ctaH matches
-  // the artifact's own button height (14px padding top/bottom + ~16px line-height, scaled) -- the
-  // first port used a much shorter, guessed height.
-  const ctaBottomMargin = 119;
+  // Real provenance text (fired-date/source, legal disclaimer) -- not part of the artifact's own
+  // card at all, but folded inside this card's bottom rather than living outside its border, so
+  // the card's own edge can run all the way to the canvas edge with nothing floating below it.
+  const legalY = y + h - 40;
+  const metaLineY = legalY - 34;
+  // ctaH matches the artifact's own button height (14px padding top/bottom + ~16px line-height,
+  // scaled) -- the first port used a much shorter, guessed height.
   const ctaH = 130;
-  const disclaimerY = y + h - ctaBottomMargin;
+  const disclaimerY = metaLineY - 40;
   const ctaY = disclaimerY - 40 - ctaH;
   const topbarIconSize = 65, topbarIconY = y + 59;
   const liveDotCx = x + w - pad - 10, liveDotCy = topbarIconY + 32;
@@ -611,7 +613,7 @@ function heroCardSvg({
         <stop offset="100%" stop-color="${COLORS.cta}"/>
       </linearGradient>
       <radialGradient id="${bgId}greenTint" cx="25%" cy="8%" r="85%">
-        <stop offset="0%" stop-color="${GLOW_GREEN}" stop-opacity="0.26"/>
+        <stop offset="0%" stop-color="${GLOW_GREEN}" stop-opacity="0.14"/>
         <stop offset="100%" stop-color="${GLOW_GREEN}" stop-opacity="0"/>
       </radialGradient>
       <radialGradient id="${bgId}cyanTint" cx="85%" cy="95%" r="45%">
@@ -654,6 +656,8 @@ function heroCardSvg({
     <rect x="${x + pad}" y="${ctaY}" width="${w - pad * 2}" height="${ctaH}" rx="65" fill="url(#${ctaId})" filter="url(#${ctaGlowId})"/>
     <text x="${x + w / 2}" y="${ctaY + 80}" font-family="DejaVu Sans" font-size="42" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
     <text x="${x + w / 2}" y="${disclaimerY}" font-family="DejaVu Sans" font-size="28" fill="#56685e" text-anchor="middle">Technical pattern data, not financial advice.</text>
+    ${metaLine ? `<text x="${x + w / 2}" y="${metaLineY}" font-family="DejaVu Sans" font-size="22" font-weight="700" fill="#93a89e" text-anchor="middle">${escapeXml(metaLine)}</text>` : ""}
+    <text x="${x + w / 2}" y="${legalY}" font-family="DejaVu Sans" font-size="19" fill="#56685e" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
     ` : ""}
   `;
 }
@@ -773,13 +777,13 @@ function highlightSvg(highlight, reveal) {
   const W = 1080, H = 1920;
   // The card IS the image now -- matching the Option A -- Glow artifact exactly, where the
   // topbar/badge/hero/panel/CTA all live inside one self-contained card rather than being split
-  // across an outer logo/headline area (above) and a separate card (below). Only a thin strip at
-  // the very bottom is left outside the card, for the real provenance text the artifact's mockup
-  // never had to show (fired-date/source, legal disclaimer).
-  const cardX = 40, cardW = W - 80, cardH = 1700;
-  const cardY = 50;
+  // across an outer logo/headline area (above) and a separate card (below). The card's own edge
+  // now runs almost to the canvas edge on all four sides -- the real provenance text (fired-date/
+  // source, legal disclaimer) that the artifact's own mockup never had to show lives INSIDE the
+  // card too, below the CTA, rather than floating in a strip outside its border.
+  const cardX = 24, cardW = W - 48, cardH = H - 48;
+  const cardY = 24;
   const showCard = reveal?.showCard ?? true;
-  const showFooter = reveal?.showFooter ?? true;
 
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
   <rect width="${W}" height="${H}" fill="${COLORS.surface}"/>
@@ -795,13 +799,9 @@ function highlightSvg(highlight, reveal) {
     // displayed window, not anything the bot ever called. Showing the verified badge/entry ring
     // there would visually claim a signal that never happened, so it's Real-Call-only.
     isVerified: highlight.badgeText === "Real Call",
+    metaLine: highlight.metaLine,
     reveal
   }) : ""}
-
-  ${showFooter ? `
-  <text x="${W / 2}" y="1815" font-family="DejaVu Sans" font-size="24" font-weight="700" fill="${COLORS.textSecondary}" text-anchor="middle">${escapeXml(highlight.metaLine)}</text>
-  <text x="${W / 2}" y="1852" font-family="DejaVu Sans" font-size="21" fill="${COLORS.textMuted}" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
-  ` : ""}
 </svg>`;
 }
 
@@ -849,8 +849,8 @@ function* buildRevealFrames(highlight) {
     yield { svg: highlightSvg(highlight, reveal), holdMs };
   }
 
-  const bare = { showCard: false, showFooter: false };
-  const cardAppears = { showCard: true, showFooter: true, showTopbar: false, showTag: false, showTicker: false, showPct: false, showPriceLine: false, showChart: false, showEntryMarker: false, showCTA: false };
+  const bare = { showCard: false };
+  const cardAppears = { showCard: true, showTopbar: false, showTag: false, showTicker: false, showPct: false, showPriceLine: false, showChart: false, showEntryMarker: false, showCTA: false };
   const withTopbar = { ...cardAppears, showTopbar: true };
   const withTickerCard = { ...withTopbar, showTag: true, showTicker: true };
 
