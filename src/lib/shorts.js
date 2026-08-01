@@ -203,6 +203,10 @@ const COLORS = {
 // validated for CVD-safety/contrast -- the sampled brand green isn't re-checked against that bar,
 // so it never carries meaning on its own, only atmosphere.
 const GLOW_GREEN = "#06e02d";
+// The lighter of the two sampled logo greens -- used only for the hero card's percentage text
+// fill (see heroCardSvg), matching the artifact's --accent-glow. GLOW_GREEN itself stays reserved
+// for the halo/blur behind it, exactly like the artifact's two-tone glow.
+const GLOW_GREEN_LIGHT = "#6bf046";
 // A third, distinct accent reserved for exactly one thing: the "Verified" trust badge on a real,
 // logged /shorts call -- never reused elsewhere, so it stays legible as "this one specific claim
 // is verified" rather than blending into the page's green.
@@ -367,6 +371,22 @@ function entryMarkerSvg(entryX, entryY, frameBottomY) {
   );
 }
 
+// Cyan variant of entryMarkerSvg, used only by the hero /shorts card (heroCardSvg) to match the
+// Option A -- Glow comparison artifact exactly: that design ties its entry dot to the same cyan
+// used for the "Verified" badge (one consistent "trust" color), not the fixed red used everywhere
+// else in the app. Kept as a separate function rather than a color parameter on entryMarkerSvg so
+// the original red marker (used by the dual-card dev format) is never at risk of accidentally
+// changing color too.
+function entryMarkerCyanSvg(entryX, entryY, frameBottomY) {
+  const color = TRUST_CYAN;
+  return (
+    `<line x1="${entryX.toFixed(1)}" y1="${entryY.toFixed(1)}" x2="${entryX.toFixed(1)}" y2="${frameBottomY.toFixed(1)}" stroke="${color}" stroke-width="2" stroke-dasharray="5,5" stroke-opacity="0.45"/>` +
+    `<circle cx="${entryX.toFixed(1)}" cy="${entryY.toFixed(1)}" r="26" fill="${color}" fill-opacity="0.18"/>` +
+    `<circle cx="${entryX.toFixed(1)}" cy="${entryY.toFixed(1)}" r="15" fill="rgba(79,214,255,0.25)" stroke="${color}" stroke-width="4"/>` +
+    `<text x="${entryX.toFixed(1)}" y="${(entryY - 24).toFixed(1)}" font-family="DejaVu Sans" font-size="19" font-weight="800" letter-spacing="0.5" fill="${color}" text-anchor="middle">BUY</text>`
+  );
+}
+
 // showEntryMarker defaults false so the old dual-card winner/loser format (generateShortImage,
 // only used by the standalone dev scripts now) keeps its original look -- a "BUY" ring makes
 // sense on a /shorts best-call highlight, not on a "loser" card in the old format, which has no
@@ -377,18 +397,10 @@ function entryMarkerSvg(entryX, entryY, frameBottomY) {
 // PNG, which keeps this function's default behavior byte-for-byte identical to before. Every
 // reveal.* field defaults to "fully shown" so a partial reveal object only has to specify what's
 // actually still hidden at that frame.
-// hero (single-card /shorts highlight only -- the old dual-card dev format never opts in, since
-// its much shorter chartH=170 budget has no vertical room for a bigger percentage or a stat grid
-// without colliding with the chart) combines the strongest single idea from each of the three
-// redesign directions compared in the shorts-redesign-concept artifact: a genuinely dominant,
-// glowing percentage as the hero element (Editorial's "read the outcome in half a second" +
-// Glow's soft halo/verified-trust treatment), backed by a small monospace data-grid readout
-// (Terminal's "instrument panel" credibility) instead of one line of prose restating the same
-// two numbers.
 function cardSvg({
   x, y, w, h, accent, accentFill, tagLabel, ticker, pctChange, openPrice, nowPrice, closes, ohlc,
   entryIndex, entryPriceRaw, timeframe, volumeSurgeRatio, chartH = 170, entryLabel = "Open",
-  showEntryMarker = false, reveal, hero = false
+  showEntryMarker = false, reveal
 }) {
   const pad = 40;
   const chartY = y + h - pad - chartH - 40;
@@ -461,39 +473,113 @@ function cardSvg({
     <text x="${x + w - pad - surgeWidth / 2}" y="${y + 60}" font-family="DejaVu Sans" font-size="21" font-weight="800" letter-spacing="0.5" fill="${COLORS.cta}" text-anchor="middle">${escapeXml(surgeText)}</text>
     ` : ""}
     ${showTicker ? `<text x="${x + pad}" y="${y + 140}" font-family="DejaVu Sans Mono" font-size="52" font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(ticker)}</text>` : ""}
-    ${showPct && hero ? `
-    <ellipse cx="${x + pad + 190}" cy="${(y + 210).toFixed(1)}" rx="340" ry="165" fill="url(#${haloId})"/>
-    <text x="${x + pad}" y="${y + 258}" font-family="DejaVu Sans" font-size="138" font-weight="900" letter-spacing="-2" fill="${accent}" filter="url(#${glowId})">${pctText}</text>
-    ` : ""}
-    ${showPct && !hero ? `
+    ${showPct ? `
     <ellipse cx="${x + pad + 150}" cy="${(y + 195).toFixed(1)}" rx="270" ry="130" fill="url(#${haloId})"/>
     <text x="${x + pad}" y="${y + 240}" font-family="DejaVu Sans" font-size="100" font-weight="900" fill="${accent}" filter="url(#${glowId})">${pctText}</text>
     ` : ""}
-    ${showPriceLine && hero ? (() => {
-      // Terminal-style readout, standing in for the old one-line "Called at $X -> Now $Y" prose --
-      // just CALLED/NOW, not a 3rd RANGE cell: chartFrame() below already prints its own
-      // "RANGE $min - $max" label right above the chart, so a duplicate cell here would repeat the
-      // exact same figure twice on one card.
-      const gy = y + 300, gh = 96, gGap = 3;
-      const cellsData = [
-        { k: entryLabel.toUpperCase(), v: openPrice },
-        { k: "NOW", v: nowPrice, pos: true }
-      ];
-      const gw = w - pad * 2;
-      const cw = (gw - gGap * (cellsData.length - 1)) / cellsData.length;
-      return `<g font-family="DejaVu Sans Mono">
-        ${cellsData.map((c, i) => {
-          const cx = x + pad + i * (cw + gGap);
-          return `
-          <rect x="${cx.toFixed(1)}" y="${gy}" width="${cw.toFixed(1)}" height="${gh}" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.12)" stroke-width="1.5"/>
-          <text x="${(cx + 18).toFixed(1)}" y="${gy + 32}" font-size="16" letter-spacing="1.5" fill="${COLORS.textMuted}">${escapeXml(c.k)}</text>
-          <text x="${(cx + 18).toFixed(1)}" y="${gy + 70}" font-size="26" font-weight="700" fill="${c.pos ? accent : COLORS.textPrimary}">${escapeXml(c.v)}</text>`;
-        }).join("")}
-      </g>`;
-    })() : ""}
-    ${showPriceLine && !hero ? `<text x="${x + pad}" y="${y + 282}" font-family="DejaVu Sans" font-size="29" fill="${COLORS.textSecondary}">${escapeXml(entryLabel)} <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(openPrice)}</tspan> → Now <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(nowPrice)}</tspan></text>` : ""}
+    ${showPriceLine ? `<text x="${x + pad}" y="${y + 282}" font-family="DejaVu Sans" font-size="29" fill="${COLORS.textSecondary}">${escapeXml(entryLabel)} <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(openPrice)}</tspan> → Now <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(nowPrice)}</tspan></text>` : ""}
     ${frame ? frame.draw : ""}
     <text x="${x + pad}" y="${y + h - 24}" font-family="DejaVu Sans" font-size="23" font-weight="700" letter-spacing="1" fill="${COLORS.textMuted}">${escapeXml(timeframe.toUpperCase())}</text>
+  `;
+}
+
+// A faithful port of the "Option A -- Glow" card from the shorts-redesign-concept comparison
+// artifact -- same visual language (verified badge, huge glow-shadowed percentage, translucent
+// bordered chart panel, cyan entry marker, gradient CTA folded into the card itself), but with the
+// bot's REAL chart (candlePaths/chartPaths/chartFrame -- the same functions the static image and
+// dual-card layout use) in place of the artifact's fixed illustrative bars. Purpose-built and kept
+// entirely separate from cardSvg (used by the dual-card dev-only format) rather than adding more
+// conditional branches to that function -- this is now the one and only renderer for the real
+// single-card /shorts highlight (see highlightSvg).
+function heroCardSvg({
+  x, y, w, h, ticker, pctChange, openPrice, nowPrice, closes, ohlc,
+  entryIndex, entryPriceRaw, timeframeLabel, entryLabel = "Called at", isVerified, reveal
+}) {
+  const pad = 40;
+  const accent = COLORS.winner; // still the CVD-validated color for the actual chart geometry
+
+  const showBadge = (reveal?.showTag ?? true) && isVerified;
+  const showTicker = reveal?.showTicker ?? true;
+  const showPct = reveal?.showPct ?? true;
+  const pctFraction = reveal?.pctFraction ?? 1;
+  const showPriceLine = reveal?.showPriceLine ?? true;
+  const showChart = reveal?.showChart ?? true;
+  const chartRevealCount = reveal?.chartRevealCount;
+  const showMarker = isVerified && (reveal?.showEntryMarker ?? true);
+  const showCTA = reveal?.showCTA ?? true;
+
+  // Panel occupies most of the card -- real room for the real chart, exactly the "glass panel"
+  // role the artifact's .panel plays around its (fixed, illustrative) bars.
+  const panelX = x + pad, panelW = w - pad * 2;
+  const panelY = y + 360, panelBottom = y + h - 200;
+  const panelPad = 24;
+  const chartX = panelX + panelPad, chartW = panelW - panelPad * 2;
+  const chartY = panelY + panelPad + 40; // extra top offset clears chartFrame's own RANGE label
+  const chartH = panelBottom - panelPad - chartY;
+
+  const useCandles = Array.isArray(ohlc) && ohlc.length >= 2;
+  const frame = !showChart ? null : (useCandles
+    ? (() => {
+        const c = candlePaths(ohlc, chartX, chartY, chartW, chartH, entryIndex, entryPriceRaw, chartRevealCount);
+        return { ...c, draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max) + c.candles + (showMarker ? entryMarkerCyanSvg(c.entryX, c.entryY, chartY + chartH) : "") };
+      })()
+    : (() => { const c = chartPaths(closes, chartX, chartY, chartW, chartH, chartRevealCount); return {
+        ...c,
+        draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max) +
+          `<path d="${c.area}" fill="${COLORS.winnerFill}"/>` +
+          `<path d="${c.line}" fill="none" stroke="${accent}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>` +
+          (showMarker ? entryMarkerCyanSvg(c.entryX, c.entryY, chartY + chartH) : "") +
+          (c.fullyRevealed ? `<circle cx="${c.lastX.toFixed(1)}" cy="${c.lastY.toFixed(1)}" r="9" fill="${accent}"/>` : "")
+      }; })());
+
+  const pctText = `${pctChange >= 0 ? "+" : ""}${(pctChange * pctFraction).toFixed(1)}%`;
+  const glowId = `heroGlow_${x}_${y}`;
+  const haloId = `heroHalo_${x}_${y}`;
+  const ctaId = `heroCta_${x}_${y}`;
+
+  const ctaY = y + h - 170, ctaH = 90;
+
+  return `
+    <defs>
+      <filter id="${glowId}" x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur stdDeviation="12" result="blur"/>
+        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+      <radialGradient id="${haloId}" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="${GLOW_GREEN}" stop-opacity="0.4"/>
+        <stop offset="100%" stop-color="${GLOW_GREEN}" stop-opacity="0"/>
+      </radialGradient>
+      <linearGradient id="${ctaId}" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#6c78ff"/>
+        <stop offset="100%" stop-color="${COLORS.cta}"/>
+      </linearGradient>
+    </defs>
+
+    <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="26" fill="none" stroke="${GLOW_GREEN}" stroke-opacity="0.3" stroke-width="7" filter="url(#${glowId})"/>
+    <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="26" fill="${COLORS.card}" stroke="${GLOW_GREEN}" stroke-opacity="0.35" stroke-width="1.5"/>
+
+    ${showBadge ? `
+    <rect x="${x + pad}" y="${y + 30}" width="230" height="44" rx="22" fill="rgba(79,214,255,0.12)" stroke="${TRUST_CYAN}" stroke-opacity="0.4" stroke-width="1.5"/>
+    <circle cx="${x + pad + 22}" cy="${y + 52}" r="6" fill="${TRUST_CYAN}"/>
+    <text x="${x + pad + 40}" y="${y + 60}" font-family="DejaVu Sans" font-size="19" font-weight="800" letter-spacing="1" fill="${TRUST_CYAN}">VERIFIED REAL CALL</text>
+    ` : ""}
+
+    ${showTicker ? `<text x="${x + pad}" y="${y + 150}" font-family="DejaVu Sans Mono" font-size="42" font-weight="700" fill="${COLORS.textSecondary}">${escapeXml(ticker)}</text>` : ""}
+
+    ${showPct ? `
+    <ellipse cx="${x + pad + 190}" cy="${(y + 210).toFixed(1)}" rx="340" ry="165" fill="url(#${haloId})"/>
+    <text x="${x + pad}" y="${y + 258}" font-family="DejaVu Sans" font-size="138" font-weight="900" letter-spacing="-3" fill="${GLOW_GREEN_LIGHT}" filter="url(#${glowId})">${pctText}</text>
+    ` : ""}
+
+    ${showPriceLine ? `<text x="${x + pad}" y="${y + 332}" xml:space="preserve" font-family="DejaVu Sans" font-size="32" fill="${COLORS.textSecondary}">${escapeXml(entryLabel)} <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(openPrice)}</tspan><tspan fill="${GLOW_GREEN_LIGHT}"> → </tspan>Now <tspan font-weight="700" fill="${COLORS.textPrimary}">${escapeXml(nowPrice)}</tspan></text>` : ""}
+
+    ${frame ? frame.draw : ""}
+
+    ${showCTA ? `
+    <rect x="${x + pad}" y="${ctaY}" width="${w - pad * 2}" height="${ctaH}" rx="45" fill="url(#${ctaId})"/>
+    <text x="${x + w / 2}" y="${ctaY + 58}" font-family="DejaVu Sans" font-size="34" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
+    <text x="${x + w / 2}" y="${ctaY + ctaH + 40}" font-family="DejaVu Sans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Technical pattern data, not financial advice.</text>
+    ` : ""}
   `;
 }
 
@@ -610,17 +696,16 @@ function logoSrc() {
 // behaviorally identical to before this function existed.
 function highlightSvg(highlight, reveal) {
   const W = 1080, H = 1920;
-  // Bigger than the dual-card layout's 820/170 -- there's no second card competing for space, so
-  // the single card (and its chart) should actually use the extra room instead of leaving a dead
-  // gap before the CTA button.
-  const cardX = 70, cardW = W - 140, cardH = 1000;
+  // heroCardSvg folds its own CTA button in at the bottom (matching the Option A -- Glow artifact,
+  // where the CTA lives inside the card) -- so the card now runs almost the full remaining height,
+  // leaving just a thin footer strip below it for the meta line/legal text.
+  const cardX = 70, cardW = W - 140, cardH = 1340;
   const cardY = 440;
 
   const showLogo = reveal?.showLogo ?? true;
   const showHeadline = reveal?.showHeadline ?? true;
   const showCaption = reveal?.showCaption ?? true;
   const showCard = reveal?.showCard ?? true;
-  const showCTA = reveal?.showCTA ?? true;
   const showFooter = reveal?.showFooter ?? true;
   // Always present (not gated behind any content-reveal beat) -- a persistent spinning watermark
   // in the corner, independent of the left-side logo/badge which is part of the reveal sequence.
@@ -655,30 +740,23 @@ function highlightSvg(highlight, reveal) {
   <text x="100" y="334" font-family="DejaVu Sans" font-size="29" font-weight="600" fill="${COLORS.textSecondary}">${escapeXml(highlight.captionText)}</text>
   ` : ""}
 
-  ${showCard ? cardSvg({
-    x: cardX, y: cardY, w: cardW, h: cardH, accent: COLORS.winner, accentFill: COLORS.winnerFill,
-    tagLabel: highlight.badgeText, ticker: highlight.ticker, pctChange: highlight.pctChange,
+  ${showCard ? heroCardSvg({
+    x: cardX, y: cardY, w: cardW, h: cardH,
+    ticker: highlight.ticker, pctChange: highlight.pctChange,
     openPrice: formatMoney(highlight.openPrice), nowPrice: formatMoney(highlight.nowPrice),
-    closes: highlight.closes, ohlc: highlight.ohlc, timeframe: highlight.timeframeLabel, volumeSurgeRatio: highlight.volumeSurgeRatio,
-    chartH: 480, entryLabel: highlight.entryLabel,
-    entryIndex: highlight.entryIndex, entryPriceRaw: highlight.openPrice,
+    closes: highlight.closes, ohlc: highlight.ohlc, timeframeLabel: highlight.timeframeLabel,
+    entryLabel: highlight.entryLabel, entryIndex: highlight.entryIndex, entryPriceRaw: highlight.openPrice,
     // Real Call cards mark a genuine logged alert (real price, real timestamp -- see bestCall.js).
     // Live Mover cards have no alert behind them at all: closes[0] is just the start of today's
-    // displayed window, not anything the bot ever called. Showing a "BUY" circle there would
-    // visually claim a signal that never happened, so it's Real-Call-only.
-    showEntryMarker: highlight.badgeText === "Real Call",
+    // displayed window, not anything the bot ever called. Showing the verified badge/entry ring
+    // there would visually claim a signal that never happened, so it's Real-Call-only.
+    isVerified: highlight.badgeText === "Real Call",
     reveal: reveal?.card
   }) : ""}
 
-  ${showCTA ? `
-  <rect x="${W / 2 - 230}" y="1470" width="460" height="90" rx="45" fill="${COLORS.cta}"/>
-  <text x="${W / 2}" y="1526" font-family="DejaVu Sans" font-size="35" font-weight="800" fill="#ffffff" text-anchor="middle">Join the Discord →</text>
-  ` : ""}
-
   ${showFooter ? `
-  <text x="${W / 2}" y="1620" font-family="DejaVu Sans" font-size="25" font-weight="700" fill="${COLORS.textSecondary}" text-anchor="middle">${escapeXml(highlight.metaLine)}</text>
-  <text x="${W / 2}" y="1665" font-family="DejaVu Sans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Technical pattern data, not financial advice.</text>
-  <text x="${W / 2}" y="1695" font-family="DejaVu Sans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
+  <text x="${W / 2}" y="1830" font-family="DejaVu Sans" font-size="25" font-weight="700" fill="${COLORS.textSecondary}" text-anchor="middle">${escapeXml(highlight.metaLine)}</text>
+  <text x="${W / 2}" y="1868" font-family="DejaVu Sans" font-size="22" fill="${COLORS.textMuted}" text-anchor="middle">Past movement isn't a guarantee of future performance.</text>
   ` : ""}
 </svg>`;
 }
@@ -746,9 +824,9 @@ function* buildRevealFrames(highlight) {
   const bare = { showLogo: false, showHeadline: false, showCaption: false, showCard: false, showCTA: false, showFooter: false };
   const withLogo = { ...bare, showLogo: true };
   const withHeadline = { ...withLogo, showHeadline: true };
-  const emptyCard = { showTag: false, showTicker: false, showPct: false, showPriceLine: false, showChart: false, showEntryMarker: false };
+  const emptyCard = { showTag: false, showTicker: false, showPct: false, showPriceLine: false, showChart: false, showEntryMarker: false, showCTA: false };
   const withCard = { ...withHeadline, showCaption: true, showCard: true, card: emptyCard };
-  const withTickerCard = { showTag: true, showTicker: true, showPct: false, showPriceLine: false, showChart: false, showEntryMarker: false };
+  const withTickerCard = { showTag: true, showTicker: true, showPct: false, showPriceLine: false, showChart: false, showEntryMarker: false, showCTA: false };
   const withTicker = { ...withCard, card: withTickerCard };
 
   yield* pushFrames(300, bare);
@@ -896,3 +974,4 @@ module.exports = {
   buildCallHighlight, buildFallbackHighlight, buildYoutubeCaption, DISCORD_INVITE_URL,
   buildRevealFrames, generateRevealFramePngs
 };
+
