@@ -542,6 +542,9 @@ function heroCardSvg({
   const badgeTickerScale = reveal?.badgeTickerScale ?? 1;
   const priceScale = reveal?.priceScale ?? 1;
   const ctaScale = reveal?.ctaScale ?? 1;
+  // Its own pop-in scale, separate from ctaScale -- the entry marker is meant to land as its own
+  // distinct beat once the chart has fully drawn in, not tag along with the CTA button's pop.
+  const entryScale = reveal?.entryScale ?? 1;
   // Matches the artifact's own ".live-dot { animation: pulse 1.8s ease-in-out infinite }" -- 1
   // (fully lit) on the static image, driven by buildRevealFrames' running clock in the video.
   const liveDotOpacity = reveal?.liveDotOpacity ?? 1;
@@ -582,14 +585,14 @@ function heroCardSvg({
   const frame = !showChart ? null : (useCandles
     ? (() => {
         const c = candlePaths(ohlc, chartX, chartY, chartW, chartH, entryIndex, entryPriceRaw, chartRevealCount, GLOW_GREEN_LIGHT, HERO_CHART_DOWN);
-        return { ...c, draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max, 30) + `<g filter="url(#${glowId})">${c.candles}</g>` + (showMarker ? entryMarkerCyanSvg(c.entryX, c.entryY, chartY + chartH, glowId) : "") };
+        return { ...c, draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max, 30) + `<g filter="url(#${glowId})">${c.candles}</g>` + (showMarker ? popGroup(c.entryX, c.entryY, entryScale, entryMarkerCyanSvg(c.entryX, c.entryY, chartY + chartH, glowId)) : "") };
       })()
     : (() => { const c = chartPaths(closes, chartX, chartY, chartW, chartH, chartRevealCount); return {
         ...c,
         draw: chartFrame(chartX, chartY, chartW, chartH, c.min, c.max, 30) +
           `<path d="${c.area}" fill="${GLOW_GREEN}" fill-opacity="0.16"/>` +
           `<path d="${c.line}" fill="none" stroke="${GLOW_GREEN_LIGHT}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" filter="url(#${glowId})"/>` +
-          (showMarker ? entryMarkerCyanSvg(c.entryX, c.entryY, chartY + chartH, glowId) : "") +
+          (showMarker ? popGroup(c.entryX, c.entryY, entryScale, entryMarkerCyanSvg(c.entryX, c.entryY, chartY + chartH, glowId)) : "") +
           (c.fullyRevealed ? `<circle cx="${c.lastX.toFixed(1)}" cy="${c.lastY.toFixed(1)}" r="9" fill="${GLOW_GREEN_LIGHT}"/>` : "")
       }; })());
 
@@ -999,8 +1002,15 @@ function* buildRevealFrames(highlight) {
   const withChart = { ...withPriceLine, showChart: true, showCTA: false };
   const elapsedBeforeFinal = 300 + 600 + 700 + 550 + 1200 + 550 + CHART_REVEAL_MS;
   if (showEntryMarker) {
-    yield* pushFrames(400, { ...withChart, showEntryMarker: true });
-    yield* pushPop(REVEAL_VIDEO_MS - elapsedBeforeFinal - 400, { ...withChart, showEntryMarker: true, showCTA: true }, "ctaScale");
+    // The chart has fully drawn by this point (chart-growth loop above always runs to completion
+    // first) -- hold one beat on the bare finished chart, then pop the cyan BUY marker in on its
+    // own as a distinct final reveal, and only then bring in the CTA. Mirrors the same
+    // "hold -> popGroup" treatment topbar/badge/price already get.
+    const ENTRY_HOLD_MS = 350;
+    const ENTRY_POP_MS = 500;
+    yield* pushFrames(ENTRY_HOLD_MS, { ...withChart, showEntryMarker: false });
+    yield* pushPop(ENTRY_POP_MS, { ...withChart, showEntryMarker: true }, "entryScale");
+    yield* pushPop(REVEAL_VIDEO_MS - elapsedBeforeFinal - ENTRY_HOLD_MS - ENTRY_POP_MS, { ...withChart, showEntryMarker: true, showCTA: true }, "ctaScale");
   } else {
     yield* pushPop(REVEAL_VIDEO_MS - elapsedBeforeFinal, { ...withChart, showCTA: true }, "ctaScale");
   }
@@ -1102,4 +1112,3 @@ module.exports = {
   buildCallHighlight, buildFallbackHighlight, buildYoutubeCaption, DISCORD_INVITE_URL,
   buildRevealFrames, generateRevealFramePngs
 };
-
