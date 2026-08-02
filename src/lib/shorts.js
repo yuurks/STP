@@ -607,15 +607,23 @@ function heroCardSvg({
   const topbarIconSize = 65, topbarIconY = y + 68;
   const liveDotCx = x + w - pad - 10, liveDotCy = topbarIconY + 32;
 
-  // The card's background gradients (greenTint/cyanTint below) showed visible banding -- distinct
+  // The card's background gradients (greenTint/cyanTint below) show visible banding -- distinct
   // diagonal facets instead of a smooth falloff -- on a large, dark, gradual radial fill. Tried
-  // fixing it with a feTurbulence dither texture first (twice: once at full card size, which cost
-  // ~1.7s/frame and 97MB of PNGs held in memory across a 97-frame video; once tiled via <pattern>,
-  // cheap to compute but the resulting noise still defeated PNG compression enough to land at a
-  // similar 83MB total) -- both were real OOM risk on the same pipeline that's been killed by
-  // exactly this kind of per-frame cost multiplication before, so neither shipped. Landed on more
-  // gradient stops instead: zero extra render cost, and enough to make the banding much less
-  // visible even though it doesn't erase the underlying 8-bit precision limit entirely.
+  // fixing it with feTurbulence-based dither twice (full card size: ~1.7s/frame, 97MB of PNGs
+  // across a 97-frame video; tiled via <pattern>: cheap to compute, but random noise still defeats
+  // PNG compression enough to land at a similar ~83MB) -- both real OOM risk on a pipeline that's
+  // been killed by exactly that failure mode before, so neither shipped. Tried lowering opacity
+  // instead, which killed the actual visible glow the gradient exists for in the first place --
+  // also rejected. This version dithers with a fixed 4x4 Bayer matrix instead of randomness: every
+  // tile is byte-identical, so (unlike noise) it costs PNG compression almost nothing while still
+  // perceptually breaking up the banding.
+  const BAYER_4X4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+  const ditherCell = 6, ditherTile = ditherCell * 4;
+  const ditherRects = BAYER_4X4.map((v, i) => {
+    const col = i % 4, row = Math.floor(i / 4);
+    const opacity = ((v / 16) * 0.025).toFixed(3);
+    return `<rect x="${col * ditherCell}" y="${row * ditherCell}" width="${ditherCell}" height="${ditherCell}" fill="${GLOW_GREEN}" opacity="${opacity}"/>`;
+  }).join("");
 
   return `
     <defs>
@@ -651,27 +659,30 @@ function heroCardSvg({
         <stop offset="100%" stop-color="${COLORS.cta}"/>
       </linearGradient>
       <radialGradient id="${bgId}greenTint" cx="25%" cy="8%" r="85%">
-        <stop offset="0%" stop-color="${GLOW_GREEN}" stop-opacity="0.09"/>
-        <stop offset="20%" stop-color="${GLOW_GREEN}" stop-opacity="0.068"/>
-        <stop offset="40%" stop-color="${GLOW_GREEN}" stop-opacity="0.048"/>
-        <stop offset="60%" stop-color="${GLOW_GREEN}" stop-opacity="0.029"/>
-        <stop offset="80%" stop-color="${GLOW_GREEN}" stop-opacity="0.013"/>
+        <stop offset="0%" stop-color="${GLOW_GREEN}" stop-opacity="0.26"/>
+        <stop offset="20%" stop-color="${GLOW_GREEN}" stop-opacity="0.2"/>
+        <stop offset="40%" stop-color="${GLOW_GREEN}" stop-opacity="0.14"/>
+        <stop offset="60%" stop-color="${GLOW_GREEN}" stop-opacity="0.085"/>
+        <stop offset="80%" stop-color="${GLOW_GREEN}" stop-opacity="0.038"/>
         <stop offset="100%" stop-color="${GLOW_GREEN}" stop-opacity="0"/>
       </radialGradient>
       <radialGradient id="${bgId}cyanTint" cx="85%" cy="95%" r="45%">
-        <stop offset="0%" stop-color="${TRUST_CYAN}" stop-opacity="0.065"/>
-        <stop offset="20%" stop-color="${TRUST_CYAN}" stop-opacity="0.049"/>
-        <stop offset="40%" stop-color="${TRUST_CYAN}" stop-opacity="0.034"/>
-        <stop offset="60%" stop-color="${TRUST_CYAN}" stop-opacity="0.021"/>
-        <stop offset="80%" stop-color="${TRUST_CYAN}" stop-opacity="0.009"/>
+        <stop offset="0%" stop-color="${TRUST_CYAN}" stop-opacity="0.10"/>
+        <stop offset="20%" stop-color="${TRUST_CYAN}" stop-opacity="0.075"/>
+        <stop offset="40%" stop-color="${TRUST_CYAN}" stop-opacity="0.053"/>
+        <stop offset="60%" stop-color="${TRUST_CYAN}" stop-opacity="0.032"/>
+        <stop offset="80%" stop-color="${TRUST_CYAN}" stop-opacity="0.014"/>
         <stop offset="100%" stop-color="${TRUST_CYAN}" stop-opacity="0"/>
       </radialGradient>
+      <pattern id="${bgId}dither" width="${ditherTile}" height="${ditherTile}" patternUnits="userSpaceOnUse">${ditherRects}</pattern>
+      <clipPath id="${bgId}clip"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="65"/></clipPath>
     </defs>
 
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="65" fill="none" stroke="${GLOW_GREEN}" stroke-opacity="0.3" stroke-width="7" filter="url(#${glowId})"/>
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="65" fill="#070b0a"/>
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="65" fill="url(#${bgId}greenTint)"/>
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="65" fill="url(#${bgId}cyanTint)"/>
+    <g clip-path="url(#${bgId}clip)"><rect x="${x}" y="${y}" width="${w}" height="${h}" fill="url(#${bgId}dither)"/></g>
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="65" fill="none" stroke="#1c2b25" stroke-width="1.5"/>
 
     ${showTopbar ? popGroup(x + w / 2, topbarIconY + 32, topbarScale, `
