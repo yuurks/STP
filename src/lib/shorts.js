@@ -567,6 +567,7 @@ function heroCardSvg({
   // 0 0 70px) because the artifact deliberately makes it the one dramatic element on the card.
   // Both are scaled by the same ~2.97x this whole card is scaled by (1000px card / 337px artifact).
   const glowId = `heroGlow_${x}_${y}`;
+  const dotGlowId = `heroDotGlow_${x}_${y}`;
   const pctGlowId = `heroPctGlow_${x}_${y}`;
   const ctaGlowId = `heroCtaGlow_${x}_${y}`;
   const haloId = `heroHalo_${x}_${y}`;
@@ -615,13 +616,21 @@ function heroCardSvg({
   // been killed by exactly that failure mode before, so neither shipped. Tried lowering opacity
   // instead, which killed the actual visible glow the gradient exists for in the first place --
   // also rejected. This version dithers with a fixed 4x4 Bayer matrix instead of randomness: every
-  // tile is byte-identical, so (unlike noise) it costs PNG compression almost nothing while still
-  // perceptually breaking up the banding.
+  // tile is byte-identical in the SVG source, so it costs meaningfully less than random noise once
+  // composited (though not free, since the same tile still lands on different gradient values at
+  // each repetition). Cell size kept small (2px) and opacity low so it reads as fine grain rather
+  // than a visible grid of squares at normal viewing size.
+  //
+  // Doesn't cover the topbar/live-dot row (see the clipPath below): the glow filter's own
+  // rectangular bounding region -- extra canvas padding needed for its blur, sized relative to
+  // that small circle/icon -- was showing up as a visible box seam once it had the dither texture
+  // to contrast against. The dither's actual job (masking banding in the big open gradient areas)
+  // doesn't need that strip anyway.
   const BAYER_4X4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
-  const ditherCell = 6, ditherTile = ditherCell * 4;
+  const ditherCell = 2, ditherTile = ditherCell * 4;
   const ditherRects = BAYER_4X4.map((v, i) => {
     const col = i % 4, row = Math.floor(i / 4);
-    const opacity = ((v / 16) * 0.025).toFixed(3);
+    const opacity = ((v / 16) * 0.022).toFixed(3);
     return `<rect x="${col * ditherCell}" y="${row * ditherCell}" width="${ditherCell}" height="${ditherCell}" fill="${GLOW_GREEN}" opacity="${opacity}"/>`;
   }).join("");
 
@@ -629,6 +638,14 @@ function heroCardSvg({
     <defs>
       <filter id="${glowId}" x="-60%" y="-60%" width="220%" height="220%">
         <feGaussianBlur in="SourceGraphic" stdDeviation="18" result="rawBlur"/>
+        <feColorMatrix in="rawBlur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.55 0" result="blur"/>
+        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+      <!-- Live-dot only: the shared glowId's stdDeviation=18 blur, scaled against something as
+           small as a 21px circle, spread far enough relative to the shape's own size that its
+           falloff read as a soft square rather than a circular halo. Same recipe, lighter blur. -->
+      <filter id="${dotGlowId}" x="-150%" y="-150%" width="400%" height="400%">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="rawBlur"/>
         <feColorMatrix in="rawBlur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.55 0" result="blur"/>
         <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
       </filter>
@@ -675,7 +692,7 @@ function heroCardSvg({
         <stop offset="100%" stop-color="${TRUST_CYAN}" stop-opacity="0"/>
       </radialGradient>
       <pattern id="${bgId}dither" width="${ditherTile}" height="${ditherTile}" patternUnits="userSpaceOnUse">${ditherRects}</pattern>
-      <clipPath id="${bgId}clip"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="65"/></clipPath>
+      <clipPath id="${bgId}clip"><rect x="${x}" y="${topbarIconY + topbarIconSize + 25}" width="${w}" height="${h - (topbarIconY + topbarIconSize + 25 - y)}" rx="65"/></clipPath>
     </defs>
 
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="65" fill="none" stroke="${GLOW_GREEN}" stroke-opacity="0.3" stroke-width="7" filter="url(#${glowId})"/>
@@ -690,7 +707,7 @@ function heroCardSvg({
     <rect x="${x + pad}" y="${topbarIconY}" width="${topbarIconSize}" height="${topbarIconSize}" rx="18" fill="${GLOW_GREEN}" filter="url(#${glowId})"/>
     <image href="${logoSrc()}" x="${x + pad}" y="${topbarIconY}" width="${topbarIconSize}" height="${topbarIconSize}" clip-path="url(#topbarLogoClip_${x}_${y})"/>
     <text x="${x + pad + topbarIconSize + 20}" y="${topbarIconY + 42}" font-family="DejaVu Sans" font-size="33" font-weight="800" letter-spacing="6" fill="#93a89e">STP · SIGNAL DECK</text>
-    <circle cx="${liveDotCx}" cy="${liveDotCy}" r="10.5" fill="${GLOW_GREEN_LIGHT}" opacity="${liveDotOpacity.toFixed(2)}" filter="url(#${glowId})"/>
+    <circle cx="${liveDotCx}" cy="${liveDotCy}" r="10.5" fill="${GLOW_GREEN_LIGHT}" opacity="${liveDotOpacity.toFixed(2)}" filter="url(#${dotGlowId})"/>
     `) : ""}
 
     ${showBadge ? popGroup(x + pad + 220, y + 240, badgeTickerScale, `
