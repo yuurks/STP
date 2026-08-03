@@ -371,7 +371,14 @@ async function postShortsHighlight(highlight, channel, guildId) {
       });
     }
   } catch (err) {
+    // Previously logged to console only -- invisible from Discord, so a total pipeline failure
+    // (both the animated and static-fallback video generation failing, or the result too large/
+    // erroring on send) looked identical to "nothing happened this check," not "something broke."
+    // The image post above already went out regardless (recorded before this whole try block), so
+    // this is just the video/YouTube half failing -- still worth a visible flag rather than a
+    // silent gap, since it's otherwise indistinguishable from the scheduler simply not being due.
     console.error(`Shorts video generation failed: ${err.message}`);
+    await channel.send(`⚠️ Video/YouTube step failed for this Short (image above already posted) -- ${err.message}`).catch(() => {});
   }
 }
 
@@ -613,8 +620,21 @@ function findFiredAlerts(guildId, results) {
 client.once(Events.ClientReady, c => {
   console.log(`Logged in as ${c.user.tag}`);
 
-  // every minute, check whether any guild's auto-scan interval has elapsed
-  setInterval(async () => {
+  // Every minute, check whether any guild's scheduled task is due. A recursive setTimeout, not
+  // setInterval -- setInterval fires on a fixed wall-clock cadence regardless of whether the
+  // previous tick's async work has finished, and this callback sequentially awaits through nine
+  // different scheduled-check categories (autoscan, alerts, autobuild, alert digest, shorts,
+  // discover, degen, breakout, youtube-watch) across every guild, several involving slow,
+  // rate-limited network calls (Twelve Data paced at 7.5s/ticker, a RugCheck call per Degen/
+  // Breakout candidate, video generation + YouTube upload for Shorts). A single pass can easily
+  // run past 60 seconds, and setInterval would then start a SECOND overlapping pass on top of the
+  // first -- confirmed against real Discord history: /shorts drops that should land ~60min apart
+  // were sometimes just 3 minutes apart, only explainable by more than one of these passes running
+  // concurrently and racing each other's due-checks (each reads/writes the same lastRun fields).
+  // Scheduling the next run only after this one fully settles makes that impossible by
+  // construction, at the cost of some drift when a pass runs long -- drift beats overlap here.
+  const SCHEDULER_INTERVAL_MS = 60 * 1000;
+  async function runScheduledChecks() {
     const now = Date.now();
     for (const [guildId, guildData] of watchlist.allGuildsWithAutoscan()) {
       const { channelId, intervalMinutes, lastRun } = guildData.autoscan;
@@ -771,7 +791,17 @@ client.once(Events.ClientReady, c => {
         console.error(`YouTube watch check failed for guild ${guildId}: ${err.message}`);
       }
     }
-  }, 60 * 1000);
+  }
+
+  (async function loop() {
+    try {
+      await runScheduledChecks();
+    } catch (err) {
+      console.error(`Scheduled checks failed: ${err.message}`);
+    } finally {
+      setTimeout(loop, SCHEDULER_INTERVAL_MS);
+    }
+  })();
 });
 
 client.on(Events.InteractionCreate, async interaction => {
