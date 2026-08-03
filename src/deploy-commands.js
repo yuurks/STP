@@ -135,7 +135,7 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("breakout")
-    .setDescription("HIGH RISK: any Solana pair (not just new) passing liquidity/buy-pressure + RugCheck (unvalidated)")
+    .setDescription("HIGH RISK: proven-size Solana coins reloading or showing early signs, + RugCheck (unvalidated)")
     .setDefaultMemberPermissions(MANAGE_GUILD_ONLY)
     .addSubcommand(sc =>
       sc.setName("on").setDescription("Turn on recurring Breakout scans")

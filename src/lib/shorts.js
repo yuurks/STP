@@ -929,11 +929,36 @@ function* buildRevealFrames(highlight) {
   // chart-build phase, a handful elsewhere) rather than subdividing beats further to chase a
   // perfectly smooth curve -- the OOM history in this file is exactly why frame count stays fixed.
   const PULSE_PERIOD_MS = 1800;
+  // Cap on how long any single held frame is allowed to freeze the dot's opacity for -- pushPop's
+  // trailing "settled" hold used to pass its whole remaining duration (up to ~8.5s, for the final
+  // CTA beat) as ONE frame, sampling the sine once and then holding that exact value for the rest
+  // of the video, which read as "the pulse stops partway through." Chunking any hold longer than
+  // this into multiple frames keeps the sine actually advancing for as long as the dot is visible.
+  const PULSE_SAMPLE_MS = 600;
   let clockMs = 0;
+  // The clock still ticks during the intro (bare/cardAppears), before the topbar -- and the dot
+  // inside it -- ever becomes visible, so without this the dot's first visible frame lands at
+  // whatever phase the clock happened to accumulate to, which read as "starts weird." Resetting
+  // the clock the moment the dot actually appears makes its first frame a clean, deterministic
+  // start every time, regardless of how long the intro beats before it happened to run.
+  let pulseStarted = false;
   function* pushFrames(holdMs, reveal) {
-    const liveDotOpacity = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin((clockMs / PULSE_PERIOD_MS) * 2 * Math.PI));
-    clockMs += holdMs;
-    yield { svg: highlightSvg(highlight, { ...reveal, liveDotOpacity }), holdMs };
+    const dotVisible = reveal?.showTopbar !== false;
+    if (dotVisible && !pulseStarted) {
+      pulseStarted = true;
+      clockMs = 0;
+    }
+    const chunkMs = dotVisible ? PULSE_SAMPLE_MS : holdMs;
+    let remaining = holdMs;
+    while (remaining > 0) {
+      const chunk = Math.min(remaining, chunkMs);
+      const liveDotOpacity = dotVisible
+        ? 0.55 + 0.45 * (0.5 + 0.5 * Math.sin((clockMs / PULSE_PERIOD_MS) * 2 * Math.PI))
+        : 1;
+      clockMs += chunk;
+      yield { svg: highlightSvg(highlight, { ...reveal, liveDotOpacity }), holdMs: chunk };
+      remaining -= chunk;
+    }
   }
 
   // Small -> overshoot -> settle -- each piece of the card (topbar, badge/ticker, price line, CTA)

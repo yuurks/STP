@@ -14,7 +14,8 @@ const portfolioLib = require("./lib/portfolio");
 const shorts = require("./lib/shorts");
 const degen = require("./lib/degen");
 const { findDegenCandidates } = degen;
-const { findBreakoutCandidates } = require("./lib/breakout");
+const breakout = require("./lib/breakout");
+const { findBreakoutCandidates } = breakout;
 const { fetchTokenTradingData } = require("./lib/dexscreener");
 const { findBestCall } = require("./lib/bestCall");
 const { generateShortVideo, generateAnimatedShortVideo } = require("./lib/shortsVideo");
@@ -23,7 +24,7 @@ const { resolveChannelId, fetchLatestVideo } = require("./lib/youtubeWatch");
 const {
   scanEmbed, alertEmbed, discoverEmbed, degenEmbed, degenClosestEmbed, volatilityEmbed, backtestEmbed,
   alertHistoryEmbed, discoverHistoryEmbed, degenHistoryEmbed, portfolioEmbed, highlightEmbed, logoAttachment,
-  breakoutEmbed, breakoutClosestEmbed, breakoutHistoryEmbed
+  breakoutEmbed, breakoutEarlySignalEmbed, breakoutClosestEmbed, breakoutHistoryEmbed
 } = require("./lib/embeds");
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -519,7 +520,7 @@ async function runDexScreenerHistory(channel, eligible, embedFn, label) {
       excludedCount++;
       continue;
     }
-    evaluated.push({ symbol: h.symbol, returnPct: ((currentPrice - h.price) / h.price) * 100 });
+    evaluated.push({ symbol: h.symbol, returnPct: ((currentPrice - h.price) / h.price) * 100, tier: h.tier });
   }
 
   if (!evaluated.length) {
@@ -557,18 +558,27 @@ async function runDegenScan(guildId, channel, { includeClosest = false } = {}) {
 }
 
 async function runBreakoutScan(guildId, channel, { includeClosest = false } = {}) {
-  const alerted = new Set(watchlist.getBreakoutAlerted(guildId));
-  const { checked, candidates, closest } = await findBreakoutCandidates(alerted, { includeClosest });
-  if (candidates.length) {
-    watchlist.addBreakoutAlerted(guildId, candidates.map(c => c.baseToken.address));
-    for (const c of candidates) {
-      watchlist.logBreakoutAlert(guildId, c.baseToken.address, c.baseToken.symbol, parseFloat(c.priceUsd) || 0, c.url, c.pairAddress);
+  const alertedKeys = new Set(watchlist.getBreakoutAlerted(guildId));
+  const { checked, confirmed, earlySignal, closest } = await findBreakoutCandidates(alertedKeys, { includeClosest });
+
+  if (confirmed.length) {
+    watchlist.addBreakoutAlerted(guildId, confirmed.map(c => `${c.baseToken.address}:confirmed`));
+    for (const c of confirmed) {
+      watchlist.logBreakoutAlert(guildId, c.baseToken.address, c.baseToken.symbol, parseFloat(c.priceUsd) || 0, c.url, c.pairAddress, "confirmed");
     }
-    await channel.send({ embeds: [breakoutEmbed(candidates)], files: [logoAttachment()] });
-  } else if (closest) {
+    await channel.send({ embeds: [breakoutEmbed(confirmed)], files: [logoAttachment()] });
+  }
+  if (earlySignal.length) {
+    watchlist.addBreakoutAlerted(guildId, earlySignal.map(c => `${c.baseToken.address}:early`));
+    for (const c of earlySignal) {
+      watchlist.logBreakoutAlert(guildId, c.baseToken.address, c.baseToken.symbol, parseFloat(c.priceUsd) || 0, c.url, c.pairAddress, "early");
+    }
+    await channel.send({ embeds: [breakoutEarlySignalEmbed(earlySignal)], files: [logoAttachment()] });
+  }
+  if (!confirmed.length && !earlySignal.length && closest) {
     await channel.send({ embeds: [breakoutClosestEmbed(closest)], files: [logoAttachment()] });
   }
-  return { checked, candidates, closest };
+  return { checked, confirmed, earlySignal, closest };
 }
 
 // Fires only for tickers whose verdict is actionable (not Neutral) and has changed since the
@@ -1184,24 +1194,26 @@ client.on(Events.InteractionCreate, async interaction => {
           watchlist.setBreakoutSchedule(interaction.guildId, { channelId: channel.id, intervalMinutes, lastRun: null });
           await interaction.reply(
             `Breakout on: every ${intervalMinutes} min, scanning Raydium's volume-ranked Solana pools (not ` +
-            "restricted to brand-new pairs) for real liquidity " +
-            `(≥$${degen.MIN_LIQUIDITY_USD.toLocaleString()}), market cap (≥$${degen.MIN_MARKET_CAP_USD.toLocaleString()}), real buy ` +
-            `pressure (≥${degen.MIN_BUY_SELL_RATIO}x buys/sells, ${degen.MIN_H1_TXNS}+ trades/hr), and confirmed price momentum ` +
-            `(≥${degen.MIN_H1_PRICE_CHANGE_PCT}% over 1h, not already dropping >${Math.abs(degen.MAX_M5_PRICE_DROP_PCT)}% in the last 5min) -- ` +
-            `then screened against known rug-pull patterns via RugCheck (mint/freeze authority, insider wallet clustering, ` +
-            `top-5-holder concentration >${degen.MAX_TOP5_HOLDER_PCT}% combined, unlocked-LP risk) -- posting to ${channel} only when one clears all of it. ` +
-            "**High risk, unvalidated**: same screen as /degen, just without the age requirement -- an established coin " +
-            "breaking out can alert here just as easily as a new one. These filters reduce exposure to known bad patterns, " +
-            "they do not guarantee anything, and this can never be backtested (no historical candles exist for either " +
-            "command to replay). Not a prediction -- do your own research."
+            "restricted to brand-new pairs), gated by a proven floor of real market cap " +
+            `(≥$${breakout.MIN_PROVEN_MARKET_CAP_USD.toLocaleString()}) and liquidity (≥$${breakout.MIN_PROVEN_LIQUIDITY_USD.toLocaleString()}) -- ` +
+            "meaningfully higher than /degen's brand-new-coin bar, since these are coins that already proved real size. " +
+            "Two tiers post separately: **Confirmed Reload** (real buy pressure " +
+            `≥${degen.MIN_BUY_SELL_RATIO}x, confirmed +${degen.MIN_H1_PRICE_CHANGE_PCT}%+ move over 1h, not already dropping ` +
+            `>${Math.abs(degen.MAX_M5_PRICE_DROP_PCT)}% in the last 5min) and **Early Signal** (buy pressure just ticking up, ` +
+            `≥${breakout.MIN_EARLY_BUY_SELL_RATIO}x, price not falling, but no confirmed move yet -- lower confidence, flagged as such, and ` +
+            "shows real off-peak numbers when a coin is well below a high this bot has itself recorded for it before). " +
+            "Both screened against known rug-pull patterns via RugCheck (mint/freeze authority, insider wallet clustering, " +
+            `top-5-holder concentration >${degen.MAX_TOP5_HOLDER_PCT}% combined, unlocked-LP risk) before posting to ${channel}. ` +
+            "**High risk, unvalidated**: these filters reduce exposure to known bad patterns, they do not guarantee anything, " +
+            "and this can never be backtested (no historical candles exist for either command to replay). Not a prediction -- do your own research."
           );
         } else if (sub === "off") {
           watchlist.setBreakoutSchedule(interaction.guildId, null);
           await interaction.reply("Breakout schedule turned off.");
         } else if (sub === "now") {
           await interaction.reply("Running a Breakout scan now -- this is fast (Raydium + DexScreener, not Twelve Data), posting here when it's done.");
-          runBreakoutScan(interaction.guildId, interaction.channel, { includeClosest: true }).then(async ({ candidates, closest }) => {
-            if (!candidates.length && !closest) {
+          runBreakoutScan(interaction.guildId, interaction.channel, { includeClosest: true }).then(async ({ confirmed, earlySignal, closest }) => {
+            if (!confirmed.length && !earlySignal.length && !closest) {
               await interaction.channel.send("Breakout scan finished -- nothing cleared the bar, and no risk-screen-clean near-miss either this run.");
             }
           }).catch(err => {

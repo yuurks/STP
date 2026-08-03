@@ -197,25 +197,54 @@ function degenClosestEmbed(pair) {
   return embed;
 }
 
-// /breakout: same trading-criteria + RugCheck bar as /degen (see degen.js's meetsTradingCriteria/
-// checkRisk, reused as-is by breakout.js), sourced from Raydium's volume-ranked pool list instead
-// of DexScreener's newest-pairs feed, and deliberately with no age requirement -- an established
-// coin breaking out is exactly what this command is for, so the framing below never claims "new."
+// /breakout Confirmed Reload: same momentum bar as /degen (meetsTradingCriteria, reused as-is
+// from degen.js), sourced from Raydium's volume-ranked pool list instead of DexScreener's
+// newest-pairs feed, and gated by a much higher "proven" market-cap/liquidity floor than /degen's
+// brand-new-coin bar (see breakout.js's MIN_PROVEN_MARKET_CAP_USD/MIN_PROVEN_LIQUIDITY_USD) --
+// deliberately with no age requirement, so the framing below never claims "new."
 function breakoutEmbed(candidates) {
   const embed = new EmbedBuilder()
-    .setTitle("🚀 Breakout — Solana Momentum (High Risk)")
+    .setTitle("🚀 Breakout — Confirmed Reload (High Risk)")
     .setColor(0xf5a623)
     .setThumbnail("attachment://logo.png")
     .setFooter({
       text: "UNVALIDATED, HIGH RISK: not necessarily a new coin -- sourced from Raydium's volume-ranked " +
-        "pool list, screened against the same liquidity/buy-pressure/market-cap/momentum bar and " +
-        "RugCheck-based risk screen as /degen, just without an age requirement. Neither is a guarantee " +
-        "against rugs, honeypots, or wash-traded volume. This can never be backtested the way /backtest " +
-        "validates everything else -- there's no history to replay. Not financial advice."
+        "pool list, screened against a real proven market-cap/liquidity floor plus the same buy-pressure/" +
+        "momentum bar and RugCheck-based risk screen as /degen, just without an age requirement. Neither " +
+        "is a guarantee against rugs, honeypots, or wash-traded volume. This can never be backtested the " +
+        "way /backtest validates everything else -- there's no history to replay. Not financial advice."
     })
     .setTimestamp();
 
   candidates.forEach(pair => embed.addFields(formatDegenField(pair)));
+  return embed;
+}
+
+// The softer, lower-confidence /breakout tier: same proven market-cap/liquidity floor as
+// Confirmed Reload, but without requiring the +5%/hr move to have actually happened yet -- just
+// buy pressure ticking up and price not falling. When a candidate is also well below its own
+// recorded peak market cap (tracked in tokenPeaks.js -- DexScreener's snapshot API has no
+// historical high of its own), that real peak-vs-now gap is shown directly rather than left
+// implicit, since "off its highs with room to climb back" is a distinct, more specific claim than
+// "just basing near current levels."
+function formatBreakoutDipLine(pair) {
+  if (!pair.dip) return "";
+  return `\nOff peak: down ${pair.dip.offPeakPct.toFixed(0)}% from a recorded ${formatDexScreenerVolume(pair.dip.peakMarketCap)} high (~${formatAge(pair.dip.peakTimestamp)} ago)`;
+}
+
+function breakoutEarlySignalEmbed(candidates) {
+  const embed = new EmbedBuilder()
+    .setTitle("👀 Breakout — Early Signal (Unconfirmed, Higher Risk)")
+    .setColor(0x9b7bd8)
+    .setThumbnail("attachment://logo.png")
+    .setFooter({
+      text: "LOWER CONFIDENCE than a Confirmed Reload alert: real proven size, buy pressure ticking up, " +
+        "not currently falling -- but no confirmed 5%+/hr move yet. Some of these will never actually " +
+        "break out again. Still passed the same RugCheck-based risk screen. Not financial advice."
+    })
+    .setTimestamp();
+
+  candidates.forEach(pair => embed.addFields(formatDegenField(pair, formatBreakoutDipLine(pair))));
   return embed;
 }
 
@@ -240,9 +269,31 @@ function breakoutClosestEmbed(pair) {
   return embed;
 }
 
+function dexScreenerPerformanceField(label, group) {
+  const wins = group.filter(e => e.returnPct > 0).length;
+  const winRate = (wins / group.length) * 100;
+  const avgReturn = group.reduce((a, e) => a + e.returnPct, 0) / group.length;
+  const sorted = [...group].sort((a, b) => b.returnPct - a.returnPct);
+  const best = sorted[0];
+  const worst = sorted[sorted.length - 1];
+  return {
+    name: `${label} · ${group.length} alert(s) evaluated`,
+    value:
+      `Win rate: ${winRate.toFixed(0)}% · Avg return: ${avgReturn >= 0 ? "+" : ""}${avgReturn.toFixed(1)}%\n` +
+      `Best: ${best.symbol} ${best.returnPct >= 0 ? "+" : ""}${best.returnPct.toFixed(1)}% · ` +
+      `Worst: ${worst.symbol} ${worst.returnPct >= 0 ? "+" : ""}${worst.returnPct.toFixed(1)}%`,
+    inline: false
+  };
+}
+
 // Same shape as degenHistoryEmbed -- no verdict to group by, no stop-loss simulation possible
 // (no intraday path data), and excluded (no-longer-returned-by-DexScreener) alerts are surfaced
 // as a count rather than silently dropped, since dropping them biases the win rate optimistic.
+// Confirmed Reload and Early Signal are split into separate performance fields (rather than one
+// blended win rate) -- they're different-confidence claims, and mixing them would let a run of
+// speculative Early Signal misses quietly drag down what might otherwise be a solid Confirmed
+// record, with no way to tell which tier is actually working. evaluated items carry an optional
+// `tier` ("confirmed" | "early"); missing tier (pre-existing logged alerts) reads as "confirmed".
 function breakoutHistoryEmbed(evaluated, excludedCount) {
   const embed = new EmbedBuilder()
     .setTitle("🚀 Breakout History — Real Performance")
@@ -250,21 +301,10 @@ function breakoutHistoryEmbed(evaluated, excludedCount) {
     .setThumbnail("attachment://logo.png")
     .setTimestamp();
 
-  const wins = evaluated.filter(e => e.returnPct > 0).length;
-  const winRate = (wins / evaluated.length) * 100;
-  const avgReturn = evaluated.reduce((a, e) => a + e.returnPct, 0) / evaluated.length;
-  const sorted = [...evaluated].sort((a, b) => b.returnPct - a.returnPct);
-  const best = sorted[0];
-  const worst = sorted[sorted.length - 1];
-
-  embed.addFields({
-    name: `${evaluated.length} alert(s) evaluated`,
-    value:
-      `Win rate: ${winRate.toFixed(0)}% · Avg return: ${avgReturn >= 0 ? "+" : ""}${avgReturn.toFixed(1)}%\n` +
-      `Best: ${best.symbol} ${best.returnPct >= 0 ? "+" : ""}${best.returnPct.toFixed(1)}% · ` +
-      `Worst: ${worst.symbol} ${worst.returnPct >= 0 ? "+" : ""}${worst.returnPct.toFixed(1)}%`,
-    inline: false
-  });
+  const confirmedGroup = evaluated.filter(e => (e.tier || "confirmed") === "confirmed");
+  const earlyGroup = evaluated.filter(e => e.tier === "early");
+  if (confirmedGroup.length) embed.addFields(dexScreenerPerformanceField("Confirmed Reload", confirmedGroup));
+  if (earlyGroup.length) embed.addFields(dexScreenerPerformanceField("Early Signal", earlyGroup));
 
   const excludedNote = excludedCount > 0
     ? `${excludedCount} logged alert(s) excluded -- DexScreener no longer returns them, almost always because the token died or got rugged, which means this win rate likely skews optimistic, not pessimistic. `
@@ -469,6 +509,6 @@ function highlightEmbed(highlight, imageFilename) {
 module.exports = {
   scanEmbed, alertEmbed, discoverEmbed, degenEmbed, degenClosestEmbed, volatilityEmbed, backtestEmbed,
   alertHistoryEmbed, discoverHistoryEmbed, degenHistoryEmbed, portfolioEmbed,
-  breakoutEmbed, breakoutClosestEmbed, breakoutHistoryEmbed,
+  breakoutEmbed, breakoutEarlySignalEmbed, breakoutClosestEmbed, breakoutHistoryEmbed,
   highlightEmbed, logoAttachment, VERDICT_COLOR
 };

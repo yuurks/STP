@@ -337,11 +337,14 @@ function addBreakoutAlerted(guildId, addresses) {
 }
 
 const MAX_BREAKOUT_ALERT_HISTORY = 200;
-function logBreakoutAlert(guildId, address, symbol, price, url, pairAddress) {
+// tier: "confirmed" | "early" -- lets /breakout history report separate performance for each
+// (see breakoutHistoryEmbed in embeds.js). Defaults to "confirmed" so entries logged before the
+// Early Signal tier existed still read correctly.
+function logBreakoutAlert(guildId, address, symbol, price, url, pairAddress, tier = "confirmed") {
   const all = loadAll();
   const guild = ensureGuild(all, guildId);
   guild.breakoutAlertHistory = guild.breakoutAlertHistory || [];
-  guild.breakoutAlertHistory.push({ address, symbol, price, url, pairAddress, timestamp: Date.now() });
+  guild.breakoutAlertHistory.push({ address, symbol, price, url, pairAddress, tier, timestamp: Date.now() });
   if (guild.breakoutAlertHistory.length > MAX_BREAKOUT_ALERT_HISTORY) {
     guild.breakoutAlertHistory = guild.breakoutAlertHistory.slice(-MAX_BREAKOUT_ALERT_HISTORY);
   }
