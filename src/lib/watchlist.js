@@ -395,6 +395,23 @@ function markBootstrappedSchedules(guildId) {
   saveAll(all);
 }
 
+// One-time-only marker for a second startup migration that corrects a mistake the first bootstrap
+// made: it pointed both Degen and Breakout at #coingod unconditionally, without checking whether
+// Degen already had a real, working schedule pointed somewhere else (#call-outs, confirmed via
+// real Discord history going back to July 29 -- well before this bootstrap ever ran). This fixes
+// that by retargeting both schedules' channelId to #call-outs, once, ever.
+function hasRetargetedToCallouts(guildId) {
+  const all = loadAll();
+  return !!all[guildId]?.retargetedToCallouts;
+}
+
+function markRetargetedToCallouts(guildId) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.retargetedToCallouts = true;
+  saveAll(all);
+}
+
 // Every fired alert gets logged here so /alerts history can check back later on what the price
 // actually did -- real forward performance, not a simulation. Capped so this can't grow forever.
 const MAX_ALERT_HISTORY = 200;
@@ -573,6 +590,7 @@ module.exports = {
   logDegenAlert, getDegenAlertHistory,
   getBreakoutAlerted, addBreakoutAlerted, setBreakoutSchedule, markBreakoutRun, allGuildsWithBreakoutSchedule,
   hasBootstrappedSchedules, markBootstrappedSchedules,
+  hasRetargetedToCallouts, markRetargetedToCallouts,
   logBreakoutAlert, getBreakoutAlertHistory,
   getPortfolio, startPortfolio, savePortfolio, resetPortfolio,
   normalizeSymbol, isValidTicker, isCryptoTicker

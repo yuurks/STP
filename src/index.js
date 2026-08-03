@@ -44,6 +44,26 @@ if (!watchlist.hasBootstrappedSchedules(BOOTSTRAP_GUILD_ID)) {
   console.log(`Bootstrap: turned on Degen + Breakout schedules for guild ${BOOTSTRAP_GUILD_ID} (every ${BOOTSTRAP_INTERVAL_MINUTES}min) -- one-time, won't run again`);
 }
 
+// One-time correction to the bootstrap above: it pointed both schedules at #coingod
+// unconditionally, without checking whether Degen already had a real, working schedule pointed
+// somewhere else -- confirmed via real Discord history that Degen had been posting to #call-outs
+// since well before this bootstrap ever existed. Retargets both schedules' channel to #call-outs
+// (preserving whatever interval/lastRun they already have) so Degen goes back to its real home and
+// Breakout matches it, without resetting either's due-timing. Gated the same way as the bootstrap
+// -- once, ever.
+const CALLOUTS_CHANNEL_ID = "1441570186518990940";
+if (!watchlist.hasRetargetedToCallouts(BOOTSTRAP_GUILD_ID)) {
+  const guildData = watchlist.getGuild(BOOTSTRAP_GUILD_ID);
+  if (guildData.degenSchedule) {
+    watchlist.setDegenSchedule(BOOTSTRAP_GUILD_ID, { ...guildData.degenSchedule, channelId: CALLOUTS_CHANNEL_ID });
+  }
+  if (guildData.breakoutSchedule) {
+    watchlist.setBreakoutSchedule(BOOTSTRAP_GUILD_ID, { ...guildData.breakoutSchedule, channelId: CALLOUTS_CHANNEL_ID });
+  }
+  watchlist.markRetargetedToCallouts(BOOTSTRAP_GUILD_ID);
+  console.log(`Retarget: Degen + Breakout schedules for guild ${BOOTSTRAP_GUILD_ID} now point at #call-outs (${CALLOUTS_CHANNEL_ID}) -- one-time, won't run again`);
+}
+
 // Twelve Data's free tier allows 8 requests/minute -- 7.5s is the fastest pace that stays
 // under that. (1 req/sec, the old value here, was actually 60/min and would rate-limit mid-scan.)
 const PACING_MS = 7500;
