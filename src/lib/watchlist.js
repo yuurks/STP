@@ -377,6 +377,24 @@ function allGuildsWithBreakoutSchedule() {
   return Object.entries(all).filter(([, g]) => g.breakoutSchedule);
 }
 
+// One-time-only marker for index.js's startup bootstrap (turns on Degen/Breakout scanning for the
+// main server automatically, since Railway SSH access isn't available to configure it directly).
+// Deliberately separate from "is degenSchedule/breakoutSchedule currently set" -- checking presence
+// alone would silently re-enable a schedule someone explicitly turned off via /degen off or
+// /breakout off the next time the bot restarts. This flag is set once, forever, on the first boot
+// that runs the bootstrap, regardless of what the schedules are set to afterward.
+function hasBootstrappedSchedules(guildId) {
+  const all = loadAll();
+  return !!all[guildId]?.schedulesBootstrapped;
+}
+
+function markBootstrappedSchedules(guildId) {
+  const all = loadAll();
+  const guild = ensureGuild(all, guildId);
+  guild.schedulesBootstrapped = true;
+  saveAll(all);
+}
+
 // Every fired alert gets logged here so /alerts history can check back later on what the price
 // actually did -- real forward performance, not a simulation. Capped so this can't grow forever.
 const MAX_ALERT_HISTORY = 200;
@@ -554,6 +572,7 @@ module.exports = {
   getDegenAlerted, addDegenAlerted, setDegenSchedule, markDegenRun, allGuildsWithDegenSchedule,
   logDegenAlert, getDegenAlertHistory,
   getBreakoutAlerted, addBreakoutAlerted, setBreakoutSchedule, markBreakoutRun, allGuildsWithBreakoutSchedule,
+  hasBootstrappedSchedules, markBootstrappedSchedules,
   logBreakoutAlert, getBreakoutAlertHistory,
   getPortfolio, startPortfolio, savePortfolio, resetPortfolio,
   normalizeSymbol, isValidTicker, isCryptoTicker

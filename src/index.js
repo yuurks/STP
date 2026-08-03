@@ -29,21 +29,19 @@ const {
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-// One-time bootstrap: turns on Degen/Breakout scanning for the main server if it isn't already
-// configured, so it doesn't have to be set up by hand through the slash commands. Idempotent
-// (checks each schedule before setting it) and runs once per boot -- safe to leave in
-// permanently, since it no-ops forever after the first successful run. Posts to the same channel
-// /alerts already uses.
+// One-time bootstrap: turns on Degen/Breakout scanning for the main server on first boot, so it
+// doesn't have to be set up by hand through the slash commands. Gated on a persisted "already
+// bootstrapped" flag (not on whether the schedules happen to be set) so this fires exactly once,
+// ever -- otherwise turning either off later via /degen off or /breakout off would get silently
+// undone the next time the bot restarts. Posts to the same channel /alerts already uses.
 const BOOTSTRAP_GUILD_ID = "1441568363972395070";
 const BOOTSTRAP_CHANNEL_ID = "1450208927894474752";
 const BOOTSTRAP_INTERVAL_MINUTES = 10;
-if (!watchlist.getGuild(BOOTSTRAP_GUILD_ID).degenSchedule) {
+if (!watchlist.hasBootstrappedSchedules(BOOTSTRAP_GUILD_ID)) {
   watchlist.setDegenSchedule(BOOTSTRAP_GUILD_ID, { channelId: BOOTSTRAP_CHANNEL_ID, intervalMinutes: BOOTSTRAP_INTERVAL_MINUTES, lastRun: null });
-  console.log(`Bootstrap: turned on Degen schedule for guild ${BOOTSTRAP_GUILD_ID} (every ${BOOTSTRAP_INTERVAL_MINUTES}min)`);
-}
-if (!watchlist.getGuild(BOOTSTRAP_GUILD_ID).breakoutSchedule) {
   watchlist.setBreakoutSchedule(BOOTSTRAP_GUILD_ID, { channelId: BOOTSTRAP_CHANNEL_ID, intervalMinutes: BOOTSTRAP_INTERVAL_MINUTES, lastRun: null });
-  console.log(`Bootstrap: turned on Breakout schedule for guild ${BOOTSTRAP_GUILD_ID} (every ${BOOTSTRAP_INTERVAL_MINUTES}min)`);
+  watchlist.markBootstrappedSchedules(BOOTSTRAP_GUILD_ID);
+  console.log(`Bootstrap: turned on Degen + Breakout schedules for guild ${BOOTSTRAP_GUILD_ID} (every ${BOOTSTRAP_INTERVAL_MINUTES}min) -- one-time, won't run again`);
 }
 
 // Twelve Data's free tier allows 8 requests/minute -- 7.5s is the fastest pace that stays
