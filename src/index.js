@@ -17,7 +17,7 @@ const { findDegenCandidates } = degen;
 const breakout = require("./lib/breakout");
 const { findBreakoutCandidates } = breakout;
 const { fetchTokenTradingData } = require("./lib/dexscreener");
-const { findBestCall } = require("./lib/bestCall");
+const { findBestCall, MIN_FEATURE_PCT_CHANGE } = require("./lib/bestCall");
 const { generateShortVideo, generateAnimatedShortVideo } = require("./lib/shortsVideo");
 const { uploadShort } = require("./lib/youtubeUpload");
 const { resolveChannelId, fetchLatestVideo } = require("./lib/youtubeWatch");
@@ -416,8 +416,11 @@ async function runShortsDrop(guildId, channel) {
     watchlist.recordShortsFeatured(guildId, best.symbol);
   } else {
     const { winner } = await shorts.findMover(SHORTS_UNIVERSE, SHORTS_SAMPLE_SIZE);
-    if (!winner) {
-      await channel.send("Shorts scan finished, but didn't find usable data -- skipped.");
+    // Same bar as findBestCall's own MIN_FEATURE_PCT_CHANGE -- a live-scan winner that hasn't
+    // actually doubled is exactly the same "looks like every other post" problem a weak real call
+    // was, just from a different source. Skipped rather than posted, even on manual request.
+    if (!winner || winner.pctChange < MIN_FEATURE_PCT_CHANGE) {
+      await channel.send(`Shorts scan finished -- nothing has doubled (+${MIN_FEATURE_PCT_CHANGE}%) yet, so nothing to post.`);
       return;
     }
     highlight = shorts.buildFallbackHighlight(winner);
@@ -426,17 +429,16 @@ async function runShortsDrop(guildId, channel) {
 }
 
 // Scheduled /shorts on check -- event-driven, not a fixed daily time: posts immediately whenever
-// findBestCall finds a genuinely NEW real winner (isFresh), never a forced repeat of something
-// already featured recently. On its own this can go silent for days if nothing fresh happens to
-// qualify, which real growth data says is the single worst thing for a Shorts channel -- posting
-// consistency (roughly daily) matters more than almost any other factor, and new content gets a
-// real algorithmic boost specifically in its first 48 hours, which a multi-day gap forfeits. So
-// once it's been too long since the last post of ANY kind (real call or fallback), this falls
-// back to the same live-mover content /shorts now uses, purely to keep the channel active --
-// still winner-only, still never fabricated, just not gated on a real call existing right now.
+// findBestCall finds a genuinely NEW real winner that's actually doubled (isFresh, see bestCall.js's
+// MIN_FEATURE_PCT_CHANGE), never a forced repeat of something already featured recently. Real
+// growth data says posting consistency matters a lot for a Shorts channel -- but posting a weak,
+// forgettable mover just to hit a cadence made every drop start to look the same, which is its own
+// kind of damage. So once it's been too long since the last post of ANY kind, this still checks
+// the live-mover fallback, but that fallback has to clear the SAME doubled bar -- a broken posting
+// streak beats a channel full of "meh." No loser side exists in this format at all, only winners.
 const SHORTS_CONSISTENCY_FALLBACK_MS = 22 * 60 * 60 * 1000; // under 24h on purpose -- an hourly-ish
 // check interval means waiting for exactly 24h risks sliding later and later each day; 22h keeps it
-// converging back toward roughly one post a day instead of drifting.
+// converging back toward roughly one post a day instead of drifting, on days something qualifies.
 async function runShortsAutoCheck(guildId, channel) {
   const best = await findBestCall(guildId);
   if (best && best.isFresh) {
@@ -450,7 +452,7 @@ async function runShortsAutoCheck(guildId, channel) {
   if (sinceLastPost < SHORTS_CONSISTENCY_FALLBACK_MS) return;
 
   const { winner } = await shorts.findMover(SHORTS_UNIVERSE, SHORTS_SAMPLE_SIZE);
-  if (!winner) return; // stay silent rather than posting garbage -- tries again next check
+  if (!winner || winner.pctChange < MIN_FEATURE_PCT_CHANGE) return; // stay silent, try again next check
   const highlight = shorts.buildFallbackHighlight(winner);
   await postShortsHighlight(highlight, channel, guildId);
 }
@@ -1073,10 +1075,13 @@ client.on(Events.InteractionCreate, async interaction => {
           watchlist.setShortsSchedule(interaction.guildId, { channelId: channel.id, intervalMinutes, lastRun: null });
           await interaction.reply(
             `Shorts on: checking every ${intervalMinutes} min in ${channel} for a genuinely new real winning call ` +
-            "(from /alerts, /discover, /degen, or /breakout history) that hasn't been featured in the last few drops -- " +
-            "posts automatically the moment one qualifies, so volume scales with how much is actually happening instead " +
-            "of a fixed number of posts a day. Only ever real, verified winners -- no live-mover fallback and no repeats " +
-            "here (that fallback is still available on-demand via `/shorts now`). Posting to YouTube is still on you."
+            `(from /alerts, /discover, /degen, or /breakout history) that's actually doubled (+${MIN_FEATURE_PCT_CHANGE}%+) ` +
+            "and hasn't been featured in the last few drops -- posts automatically the moment one qualifies, so volume " +
+            "scales with how much is actually happening instead of a fixed number of posts a day. Falls back to a live-" +
+            `mover scan (same +${MIN_FEATURE_PCT_CHANGE}%+ bar, never weaker) if it's been over 22h since the last post ` +
+            "of any kind, just to avoid multi-day silent gaps -- still never posts anything under that bar, a broken " +
+            "streak beats a weak post. Also attempts an automatic YouTube upload (real API quota, 6/day) -- falls back " +
+            "to handing you the file to upload manually if that's exhausted or fails."
           );
         } else if (sub === "off") {
           watchlist.setShortsSchedule(interaction.guildId, null);

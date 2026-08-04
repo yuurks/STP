@@ -25,6 +25,13 @@ const DEX_EVAL_MIN_AGE_MS = 60 * 60 * 1000;
 const ALERT_EVAL_LOOKBACK_DAYS = 120;
 const MAX_SYMBOLS_PER_SOURCE = 30;
 
+// A "winner" used to mean anything merely positive -- a 1.7% mover got exactly the same "Real
+// Call" treatment as a real standout, which made every /shorts drop feel the same regardless of
+// whether anything actually notable happened. Raised to a real bar: the call has to have DOUBLED
+// (+100%) since it fired to be featured at all. Also used by index.js to gate the live-scan
+// fallback (findMover) the same way, so neither path can post something this weak.
+const MIN_FEATURE_PCT_CHANGE = 100;
+
 // Walks forward from the fire date checking the same 2x-ATR stop /scan shows, same as
 // runAlertHistory in index.js -- scores at the stop price if it would have been hit, otherwise
 // the latest close. Returns null if there's no forward data yet (shouldn't happen given the
@@ -289,7 +296,7 @@ async function findBestCall(guildId) {
     bestFromDexScreenerSource(guildId, "Breakout", watchlist.getBreakoutAlertHistory, recentSymbols)
   ]);
 
-  const winners = results.filter(r => r && r.pctChange > 0);
+  const winners = results.filter(r => r && r.pctChange >= MIN_FEATURE_PCT_CHANGE);
   // Each per-source result is already rotation-aware on its own, but a source can still come back
   // with a forced repeat if that source alone had no fresh alternative (e.g. Degen's only winner
   // ever is the one just featured) -- re-applying rotation across all four combined still prefers
@@ -303,4 +310,4 @@ async function findBestCall(guildId) {
   return best;
 }
 
-module.exports = { findBestCall };
+module.exports = { findBestCall, MIN_FEATURE_PCT_CHANGE };
