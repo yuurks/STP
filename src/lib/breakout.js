@@ -79,7 +79,7 @@ function dipRecoveryInfo(pair, previousPeak) {
   if (cap <= 0 || cap > previousPeak.marketCap * DIP_RECOVERY_MAX_RATIO) return null;
   return {
     peakMarketCap: previousPeak.marketCap,
-    peakTimestamp: previousPeak.timestamp,
+    peakTimestamp: previousPeak.peakTimestamp,
     offPeakPct: (1 - cap / previousPeak.marketCap) * 100
   };
 }

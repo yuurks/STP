@@ -658,18 +658,34 @@ client.once(Events.ClientReady, c => {
   const SCHEDULER_INTERVAL_MS = 60 * 1000;
   async function runScheduledChecks() {
     const now = Date.now();
+
+    // Autoscan and Alerts both scan a guild's own watchlist via runScan -- if both schedules
+    // happen to be due for the same guild in the same tick, calling runScan twice would re-fetch
+    // every ticker from Twelve Data a second time for no benefit, doubling both API usage and
+    // wall-clock time (each ticker costs a real 7.5s pace delay). Cached per-tick, per-guild so
+    // either consumer reuses the same scan if both are due together; harmless if only one is.
+    const scanCache = new Map();
+    async function cachedScan(guildId) {
+      if (!scanCache.has(guildId)) scanCache.set(guildId, await runScan(guildId));
+      return scanCache.get(guildId);
+    }
+
     for (const [guildId, guildData] of watchlist.allGuildsWithAutoscan()) {
       const { channelId, intervalMinutes, lastRun } = guildData.autoscan;
       const due = !lastRun || now - lastRun >= intervalMinutes * 60 * 1000;
       if (!due) continue;
 
       try {
+        const results = await cachedScan(guildId);
+        // Marked right after the expensive, rate-limited scan completes, not after the posting
+        // below -- a channel.send failure (deleted channel, permissions) shouldn't cause this to
+        // retry every 60s forever and re-burn Twelve Data's shared daily quota on a guild that's
+        // stuck failing at the posting step specifically.
+        watchlist.markAutoscanRun(guildId, now);
         const channel = await client.channels.fetch(channelId);
-        const results = await runScan(guildId);
         if (results.length) await channel.send({ embeds: [scanEmbed(results)], files: [logoAttachment()] });
         const portfolioEvents = updatePortfolio(guildId, results);
         if (portfolioEvents?.length) await channel.send(`📒 Paper portfolio: ${portfolioEvents.join(" · ")}`);
-        watchlist.markAutoscanRun(guildId, now);
       } catch (err) {
         console.error(`Autoscan failed for guild ${guildId}: ${err.message}`);
       }
@@ -681,7 +697,8 @@ client.once(Events.ClientReady, c => {
       if (!due) continue;
 
       try {
-        const results = await runScan(guildId);
+        const results = await cachedScan(guildId);
+        watchlist.markAlertsRun(guildId, now); // same reasoning as Autoscan above
         const fired = findFiredAlerts(guildId, results);
         const portfolioEvents = updatePortfolio(guildId, results);
         if (fired.length || portfolioEvents?.length) {
@@ -692,7 +709,6 @@ client.once(Events.ClientReady, c => {
           }
           if (portfolioEvents?.length) await channel.send(`📒 Paper portfolio: ${portfolioEvents.join(" · ")}`);
         }
-        watchlist.markAlertsRun(guildId, now);
       } catch (err) {
         console.error(`Alert check failed for guild ${guildId}: ${err.message}`);
       }

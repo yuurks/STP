@@ -6,6 +6,12 @@
 // backtested the way /backtest validates everything else -- there's no history to replay.
 
 const BASE_URL = "https://api.dexscreener.com";
+const sleep = ms => new Promise(res => setTimeout(res, ms));
+// A little over the 1000ms/req a 60/min limit implies, for safety margin -- fine when this was
+// only /degen's small candidate count, but /breakout's pool (Raydium's top ~1000 pools, up to
+// ~2000 addresses) can need ~67 chunked requests in a single scan. Fired back-to-back with no
+// delay, that risks bursting past the rate limit within one scan alone.
+const CHUNK_PACING_MS = 1100;
 
 // Newest token profiles across every chain DexScreener tracks -- filtered here to Solana only.
 // This is a rolling feed (typically the last ~15-30 minutes of activity), not a paginated
@@ -34,6 +40,7 @@ async function fetchTokenTradingData(chainId, addresses) {
   if (!addresses.length) return [];
   const results = [];
   for (let i = 0; i < addresses.length; i += MAX_BATCH_ADDRESSES) {
+    if (i > 0) await sleep(CHUNK_PACING_MS);
     const chunk = addresses.slice(i, i + MAX_BATCH_ADDRESSES);
     const res = await fetch(`${BASE_URL}/tokens/v1/${chainId}/${chunk.join(",")}`);
     if (!res.ok) throw new Error(`DexScreener tokens lookup returned ${res.status}`);
