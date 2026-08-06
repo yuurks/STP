@@ -417,10 +417,10 @@ async function runShortsDrop(guildId, channel) {
   } else {
     const { winner } = await shorts.findMover(SHORTS_UNIVERSE, SHORTS_SAMPLE_SIZE);
     // Same bar as findBestCall's own MIN_FEATURE_PCT_CHANGE -- a live-scan winner that hasn't
-    // actually doubled is exactly the same "looks like every other post" problem a weak real call
-    // was, just from a different source. Skipped rather than posted, even on manual request.
+    // cleared it is exactly the same "looks like every other post" problem a weak real call was,
+    // just from a different source. Skipped rather than posted, even on manual request.
     if (!winner || winner.pctChange < MIN_FEATURE_PCT_CHANGE) {
-      await channel.send(`Shorts scan finished -- nothing has doubled (+${MIN_FEATURE_PCT_CHANGE}%) yet, so nothing to post.`);
+      await channel.send(`Shorts scan finished -- nothing is up +${MIN_FEATURE_PCT_CHANGE}%+ yet, so nothing to post.`);
       return;
     }
     highlight = shorts.buildFallbackHighlight(winner);
@@ -429,13 +429,13 @@ async function runShortsDrop(guildId, channel) {
 }
 
 // Scheduled /shorts on check -- event-driven, not a fixed daily time: posts immediately whenever
-// findBestCall finds a genuinely NEW real winner that's actually doubled (isFresh, see bestCall.js's
-// MIN_FEATURE_PCT_CHANGE), never a forced repeat of something already featured recently. Real
-// growth data says posting consistency matters a lot for a Shorts channel -- but posting a weak,
-// forgettable mover just to hit a cadence made every drop start to look the same, which is its own
-// kind of damage. So once it's been too long since the last post of ANY kind, this still checks
-// the live-mover fallback, but that fallback has to clear the SAME doubled bar -- a broken posting
-// streak beats a channel full of "meh." No loser side exists in this format at all, only winners.
+// findBestCall finds a genuinely NEW real winner that clears MIN_FEATURE_PCT_CHANGE (isFresh, see
+// bestCall.js), never a forced repeat of something already featured recently. Real growth data
+// says posting consistency matters a lot for a Shorts channel -- but posting a weak, forgettable
+// mover just to hit a cadence made every drop start to look the same, which is its own kind of
+// damage. So once it's been too long since the last post of ANY kind, this still checks the
+// live-mover fallback, but that fallback has to clear the SAME bar -- a broken posting streak
+// beats a channel full of "meh." No loser side exists in this format at all, only winners.
 const SHORTS_CONSISTENCY_FALLBACK_MS = 22 * 60 * 60 * 1000; // under 24h on purpose -- an hourly-ish
 // check interval means waiting for exactly 24h risks sliding later and later each day; 22h keeps it
 // converging back toward roughly one post a day instead of drifting, on days something qualifies.
@@ -1091,7 +1091,7 @@ client.on(Events.InteractionCreate, async interaction => {
           watchlist.setShortsSchedule(interaction.guildId, { channelId: channel.id, intervalMinutes, lastRun: null });
           await interaction.reply(
             `Shorts on: checking every ${intervalMinutes} min in ${channel} for a genuinely new real winning call ` +
-            `(from /alerts, /discover, /degen, or /breakout history) that's actually doubled (+${MIN_FEATURE_PCT_CHANGE}%+) ` +
+            `(from /alerts, /discover, /degen, or /breakout history) that's up at least +${MIN_FEATURE_PCT_CHANGE}% ` +
             "and hasn't been featured in the last few drops -- posts automatically the moment one qualifies, so volume " +
             "scales with how much is actually happening instead of a fixed number of posts a day. Falls back to a live-" +
             `mover scan (same +${MIN_FEATURE_PCT_CHANGE}%+ bar, never weaker) if it's been over 22h since the last post ` +

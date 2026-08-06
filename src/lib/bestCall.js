@@ -27,10 +27,10 @@ const MAX_SYMBOLS_PER_SOURCE = 30;
 
 // A "winner" used to mean anything merely positive -- a 1.7% mover got exactly the same "Real
 // Call" treatment as a real standout, which made every /shorts drop feel the same regardless of
-// whether anything actually notable happened. Raised to a real bar: the call has to have DOUBLED
-// (+100%) since it fired to be featured at all. Also used by index.js to gate the live-scan
-// fallback (findMover) the same way, so neither path can post something this weak.
-const MIN_FEATURE_PCT_CHANGE = 100;
+// whether anything actually notable happened. Raised to a real bar: the call has to be up at
+// least this much since it fired to be featured at all. Also used by index.js to gate the
+// live-scan fallback (findMover) the same way, so neither path can post something this weak.
+const MIN_FEATURE_PCT_CHANGE = 50;
 
 // Walks forward from the fire date checking the same 2x-ATR stop /scan shows, same as
 // runAlertHistory in index.js -- scores at the stop price if it would have been hit, otherwise
