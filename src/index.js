@@ -693,7 +693,10 @@ async function runBreakoutScan(guildId, channel, { includeClosest = false } = {}
     await channel.send({ embeds: [breakoutEmbed(confirmed)], files: [logoAttachment()] });
   }
   if (earlySignal.length) {
-    watchlist.addBreakoutAlerted(guildId, earlySignal.map(c => `${c.baseToken.address}:early`));
+    // Matches breakout.js's own dedup-key choice (dip-recovery gets a separate key from plain
+    // early signal, so a coin already alerted on the way up isn't permanently silenced once it
+    // later drops off a real recorded peak and becomes a genuinely different, newsworthy claim).
+    watchlist.addBreakoutAlerted(guildId, earlySignal.map(c => `${c.baseToken.address}:${c.dip ? "dip" : "early"}`));
     for (const c of earlySignal) {
       watchlist.logBreakoutAlert(guildId, c.baseToken.address, c.baseToken.symbol, parseFloat(c.priceUsd) || 0, c.url, c.pairAddress, "early");
     }

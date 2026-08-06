@@ -122,8 +122,18 @@ async function findBreakoutCandidates(alertedKeys, { includeClosest = false } = 
     if (meetsConfirmedReload(best)) {
       if (!alertedKeys.has(`${addr}:confirmed`)) preQualifiedConfirmed.push(best);
     } else if (meetsEarlySignal(best)) {
-      if (!alertedKeys.has(`${addr}:early`)) {
-        preQualifiedEarly.push({ pair: best, dip: dipRecoveryInfo(best, previousPeaks.get(addr)) });
+      const dip = dipRecoveryInfo(best, previousPeaks.get(addr));
+      // Dip-recovery gets its own dedup key, separate from a plain early-signal alert -- "this
+      // coin is showing early momentum" and "this coin is now 51% off a real recorded peak, with
+      // room to climb back" are different, both-worth-seeing claims about the same token, even
+      // though they route through the same tier. Without this, a coin alerted once as plain early
+      // signal (before it had any peak history yet) would stay permanently suppressed even after
+      // it develops real, newsworthy dip info later -- confirmed against real data: CATE fired
+      // once on the way up to its $47M peak, then never fired again even after dropping 51% off
+      // that exact peak, because the single "early" flag was already used.
+      const dedupKey = dip ? `${addr}:dip` : `${addr}:early`;
+      if (!alertedKeys.has(dedupKey)) {
+        preQualifiedEarly.push({ pair: best, dip });
       }
     } else if (includeClosest) {
       nearMisses.push({ pair: best, score: closenessScore(best) });
