@@ -1141,10 +1141,14 @@ function buildYoutubeCaption(highlight) {
 // font troubleshooting note at the top of this file) -- emoji glyphs aren't in that font at all,
 // so they'd render as empty tofu boxes, the exact bug that was already hit and fixed once here.
 // Feature rows use a plain colored square marker instead of an icon glyph.
+// No "free" anywhere in here -- accurate while the scanner/alerts/calls were the only thing this
+// bot offered, but no longer true of the project as a whole now that a paid Supporter tier
+// exists. The signals themselves still aren't paywalled (see the Whop setup rules), but this ad
+// makes no blanket "free" claim about the community/product, just about what's actually verified.
 const PROMO_FEATURES = [
   { title: "LIVE ALERTS", body: "Buy/Sell signals pinged the moment they fire" },
   { title: "VERIFIED CALLS", body: "Every alert logged and tracked to a real result" },
-  { title: "FREE SCANNER", body: "200+ pairs scanned automatically, no cost" },
+  { title: "REAL SCANNER", body: "200+ pairs scanned automatically, no guesswork" },
   { title: "BACKTESTING", body: "Replay any signal against real history first" }
 ];
 
@@ -1254,7 +1258,7 @@ function promoSvg(scene, scale, logoRotationDeg) {
       <text y="-30" font-family="DejaVu Sans" font-size="72" font-weight="900" letter-spacing="-1" fill="#ffffff" filter="url(#neonGlow)">JOIN THE</text>
       <text y="80" font-family="DejaVu Sans" font-size="72" font-weight="900" letter-spacing="-1" fill="${NEON.green}" filter="url(#neonGlow)">DISCORD →</text>
       <text y="180" font-family="DejaVu Sans Mono" font-size="28" font-weight="600" fill="${NEON.textDim}">${escapeXml(DISCORD_INVITE_URL.replace(/^https?:\/\//, ""))}</text>
-      <text y="222" font-family="DejaVu Sans" font-size="22" fill="#8b93a1">Free to join. No card required.</text>
+      <text y="222" font-family="DejaVu Sans" font-size="22" fill="#8b93a1">Real signals. Real results.</text>
     </g>`;
   }
 
@@ -1300,7 +1304,7 @@ function promoHeroSvg() {
     ${scrim(60, 250, 960, 275)}
     <text x="${W / 2}" y="330" font-family="DejaVu Sans" font-size="88" font-weight="900" letter-spacing="-1" fill="#ffffff" filter="url(#neonGlow)">REAL SIGNALS.</text>
     <text x="${W / 2}" y="430" font-family="DejaVu Sans" font-size="88" font-weight="900" letter-spacing="-1" fill="${NEON.green}" filter="url(#neonGlow)">REAL RESULTS.</text>
-    <text x="${W / 2}" y="490" font-family="DejaVu Sans" font-size="28" font-weight="600" fill="${NEON.textDim}">Free crypto scanner. Every call verified.</text>
+    <text x="${W / 2}" y="490" font-family="DejaVu Sans" font-size="28" font-weight="600" fill="${NEON.textDim}">Real crypto scanner. Every call verified.</text>
   </g>
 
   ${chips}
@@ -1397,10 +1401,10 @@ async function generatePromoRevealFramePngs() {
 // going fully silent during a quiet stretch. Shared by both promo ad variants (the SVG hype-
 // trailer and the neon-sign photo ad) -- neither names a specific coin, so one caption fits both.
 function buildPromoYoutubeCaption() {
-  const title = "Free Crypto Signal Scanner — Real Alerts, Verified Results";
+  const title = "Crypto Signal Scanner — Real Alerts, Verified Results";
   const description = [
     "Live Buy/Sell alerts the moment they fire, every call logged and tracked to a real result, " +
-      "a free scanner covering 200+ pairs, and backtesting to check any signal against real history first.",
+      "a scanner covering 200+ pairs, and backtesting to check any signal against real history first.",
     "",
     `Real scans, real signals -- not financial advice. Join the Discord: ${DISCORD_INVITE_URL}`,
     "",
