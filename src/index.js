@@ -402,6 +402,78 @@ async function postShortsHighlight(highlight, channel, guildId) {
   }
 }
 
+// Last-resort /shorts fallback: an evergreen "join the Discord" ad, no ticker or market data at
+// all. Only ever reached after BOTH a real verified call AND a live-mover fallback have already
+// failed to clear MIN_FEATURE_PCT_CHANGE (see runShortsDrop/runShortsAutoCheck) -- this exists so
+// a genuinely quiet stretch gets something real instead of the channel going silent, never to
+// compete with or displace an actual call. Randomly picks one of two visually distinct variants
+// each time (the SVG hype-trailer, generated fresh, vs. the neon-sign photo ad, a fixed
+// pre-rendered asset with its own CTA already baked in -- see shorts.js) so repeat viewers during
+// a longer quiet spell don't see the identical ad every time.
+async function postPromoAd(channel, guildId) {
+  const useNeonSign = Math.random() < 0.5;
+  const png = useNeonSign ? shorts.getNeonSignAdImage() : await shorts.generatePromoImage();
+  const filename = "stp-promo.png";
+  const file = new AttachmentBuilder(png, { name: filename });
+  // Same reasoning as postShortsHighlight's own button -- the image's baked-in CTA can't be
+  // clicked on its own; this is what actually makes it functional on the Discord post itself.
+  const joinDiscordButton = new ButtonBuilder()
+    .setLabel("Join the Discord")
+    .setStyle(ButtonStyle.Link)
+    .setURL(shorts.DISCORD_INVITE_URL);
+  const row = new ActionRowBuilder().addComponents(joinDiscordButton);
+  const promoEmbed = new EmbedBuilder()
+    .setTitle("📣 Real Signals. Real Results.")
+    .setDescription("Live alerts, verified calls, a free 200+ pair scanner, and backtesting -- all real, all free.")
+    .setImage(`attachment://${filename}`)
+    .setColor(0x6bf046);
+  await channel.send({ embeds: [promoEmbed], files: [file], components: [row] });
+  watchlist.recordShortsPostAt(guildId);
+
+  // Additive only, same pattern as postShortsHighlight -- the image above already went out
+  // regardless of what happens here.
+  try {
+    const mp4 = useNeonSign
+      ? shorts.getNeonSignAdVideo()
+      : await generateAnimatedShortVideo(await shorts.generatePromoRevealFramePngs());
+    const { title, description } = shorts.buildPromoYoutubeCaption();
+
+    let youtubeResult = null;
+    try {
+      youtubeResult = await uploadShort({ videoBuffer: mp4, title, description });
+    } catch (err) {
+      console.error(`Promo ad YouTube upload skipped: ${err.message}`);
+    }
+
+    if (youtubeResult) {
+      const youtubeThumbFile = new AttachmentBuilder(png, { name: "stp-promo-thumb.png" });
+      const watchButton = new ButtonBuilder()
+        .setLabel("Watch on YouTube")
+        .setStyle(ButtonStyle.Link)
+        .setURL(youtubeResult.url);
+      const youtubeEmbed = new EmbedBuilder()
+        .setTitle("Posted to YouTube")
+        .setURL(youtubeResult.url)
+        .setImage(`attachment://stp-promo-thumb.png`)
+        .setColor(0xff0000);
+      await channel.send({
+        embeds: [youtubeEmbed],
+        files: [youtubeThumbFile],
+        components: [new ActionRowBuilder().addComponents(watchButton)]
+      });
+    } else {
+      const videoFile = new AttachmentBuilder(mp4, { name: "stp-promo.mp4" });
+      await channel.send({
+        content: `Video file for this ad -- download and upload to YouTube.\n\n**Title:**\n\`\`\`${title}\`\`\`\n**Description:**\n\`\`\`${description}\`\`\``,
+        files: [videoFile]
+      });
+    }
+  } catch (err) {
+    console.error(`Promo ad video generation failed: ${err.message}`);
+    await channel.send(`⚠️ Video/YouTube step failed for this ad (image above already posted) -- ${err.message}`).catch(() => {});
+  }
+}
+
 // Manual /shorts now -- always posts something, since a human explicitly asked for it right now.
 // Prefers a real past call (see bestCall.js -- the single best-performing eligible entry across
 // /alerts, /discover, /degen, and /breakout history for this guild) over a live market scan,
@@ -418,9 +490,11 @@ async function runShortsDrop(guildId, channel) {
     const { winner } = await shorts.findMover(SHORTS_UNIVERSE, SHORTS_SAMPLE_SIZE);
     // Same bar as findBestCall's own MIN_FEATURE_PCT_CHANGE -- a live-scan winner that hasn't
     // cleared it is exactly the same "looks like every other post" problem a weak real call was,
-    // just from a different source. Skipped rather than posted, even on manual request.
+    // just from a different source. Falls back to the evergreen promo ad rather than posting it,
+    // even on manual request -- a human explicitly asked for something, so "nothing qualifies"
+    // still gets a real post, just never a weak call.
     if (!winner || winner.pctChange < MIN_FEATURE_PCT_CHANGE) {
-      await channel.send(`Shorts scan finished -- nothing is up +${MIN_FEATURE_PCT_CHANGE}%+ yet, so nothing to post.`);
+      await postPromoAd(channel, guildId);
       return;
     }
     highlight = shorts.buildFallbackHighlight(winner);
@@ -434,8 +508,9 @@ async function runShortsDrop(guildId, channel) {
 // says posting consistency matters a lot for a Shorts channel -- but posting a weak, forgettable
 // mover just to hit a cadence made every drop start to look the same, which is its own kind of
 // damage. So once it's been too long since the last post of ANY kind, this still checks the
-// live-mover fallback, but that fallback has to clear the SAME bar -- a broken posting streak
-// beats a channel full of "meh." No loser side exists in this format at all, only winners.
+// live-mover fallback (same bar, never weaker), and only once THAT also comes up empty does the
+// evergreen promo ad go out instead -- a real post beats silence, but never at the cost of
+// pretending a weak mover is worth featuring. No loser side exists in this format, only winners.
 const SHORTS_CONSISTENCY_FALLBACK_MS = 22 * 60 * 60 * 1000; // under 24h on purpose -- an hourly-ish
 // check interval means waiting for exactly 24h risks sliding later and later each day; 22h keeps it
 // converging back toward roughly one post a day instead of drifting, on days something qualifies.
@@ -452,7 +527,12 @@ async function runShortsAutoCheck(guildId, channel) {
   if (sinceLastPost < SHORTS_CONSISTENCY_FALLBACK_MS) return;
 
   const { winner } = await shorts.findMover(SHORTS_UNIVERSE, SHORTS_SAMPLE_SIZE);
-  if (!winner || winner.pctChange < MIN_FEATURE_PCT_CHANGE) return; // stay silent, try again next check
+  if (!winner || winner.pctChange < MIN_FEATURE_PCT_CHANGE) {
+    // Posting this calls recordShortsPostAt just like a real drop does, so the 22h clock resets --
+    // the next promo (or hopefully a real call by then) is still at least ~22h out, never spammy.
+    await postPromoAd(channel, guildId);
+    return;
+  }
   const highlight = shorts.buildFallbackHighlight(winner);
   await postShortsHighlight(highlight, channel, guildId);
 }
@@ -1095,8 +1175,9 @@ client.on(Events.InteractionCreate, async interaction => {
             "and hasn't been featured in the last few drops -- posts automatically the moment one qualifies, so volume " +
             "scales with how much is actually happening instead of a fixed number of posts a day. Falls back to a live-" +
             `mover scan (same +${MIN_FEATURE_PCT_CHANGE}%+ bar, never weaker) if it's been over 22h since the last post ` +
-            "of any kind, just to avoid multi-day silent gaps -- still never posts anything under that bar, a broken " +
-            "streak beats a weak post. Also attempts an automatic YouTube upload (real API quota, 6/day) -- falls back " +
+            "of any kind, just to avoid multi-day silent gaps -- and only once that ALSO comes up empty does an " +
+            "evergreen 'join the Discord' ad go out instead, so a quiet stretch still gets a real post without ever " +
+            "posting a weak call. Also attempts an automatic YouTube upload (real API quota, 6/day) -- falls back " +
             "to handing you the file to upload manually if that's exhausted or fails."
           );
         } else if (sub === "off") {

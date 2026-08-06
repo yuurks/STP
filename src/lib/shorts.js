@@ -1132,8 +1132,306 @@ function buildYoutubeCaption(highlight) {
 
   return { title, description };
 }
+
+// A standalone "join the Discord" ad -- NOT a highlight card, no market data at all, so this is
+// deliberately its own layout/reveal pipeline rather than reusing highlightSvg/cardSvg. One-off
+// asset generation (see scripts/generate-discord-ad.js), not something the bot posts on its own.
+//
+// No emoji anywhere: this render pipeline only has DejaVu Sans/Mono actually installed (see the
+// font troubleshooting note at the top of this file) -- emoji glyphs aren't in that font at all,
+// so they'd render as empty tofu boxes, the exact bug that was already hit and fixed once here.
+// Feature rows use a plain colored square marker instead of an icon glyph.
+const PROMO_FEATURES = [
+  { title: "LIVE ALERTS", body: "Buy/Sell signals pinged the moment they fire" },
+  { title: "VERIFIED CALLS", body: "Every alert logged and tracked to a real result" },
+  { title: "FREE SCANNER", body: "200+ pairs scanned automatically, no cost" },
+  { title: "BACKTESTING", body: "Replay any signal against real history first" }
+];
+
+// Deliberately NOT the trading-card look (dark card, thin border, small rows) -- this is a hype
+// trailer, not a data readout: near-black with neon green/violet glow, huge full-bleed statement
+// cuts that REPLACE each other rather than accumulating into a static layout, and a punchy scale
+// "pop" entrance (small -> overshoot -> settle) instead of a gentle fade. The corner logo is the
+// only element shared with the trading-card visual language, kept as the one consistent brand
+// anchor across everything this bot posts.
+// green matches GLOW_GREEN_LIGHT -- the same brand green every real /shorts card glows with --
+// instead of an unrelated neon-mint, so this still reads as the same brand under a louder style.
+const NEON = { green: GLOW_GREEN_LIGHT, violet: "#b24bf3", ink: "#05070a", textDim: "#d3d9e6" };
+
+// A soft dark panel behind a text block -- the glow background looks great but its blobs land at
+// different strengths in different places, so text sitting directly on it has inconsistent (often
+// poor) contrast. This guarantees legibility without touching the background itself.
+function scrim(x, y, w, h, rx = 28) {
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" fill="rgba(2,4,7,0.6)"/>`;
+}
+
+// neonGlow: a single, tighter blur pass behind the sharp source text, not the original double-
+// merged wider blur (stdDeviation 15, blurred twice) -- that made the letterforms themselves look
+// soft and hazy instead of just giving them a glow halo, which was the actual readability
+// complaint. This keeps a real neon-edge glow without smearing the text underneath it.
+function neonDefs() {
+  return `
+  <defs>
+    <radialGradient id="glowGreen" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="${NEON.green}" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="${NEON.green}" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowViolet" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="${NEON.violet}" stop-opacity="0.42"/>
+      <stop offset="100%" stop-color="${NEON.violet}" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="vignette" cx="50%" cy="42%" r="75%">
+      <stop offset="55%" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.6"/>
+    </radialGradient>
+    <filter id="neonGlow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>`;
+}
+
+function neonBackground(W, H) {
+  const lines = [];
+  for (let x = -H; x < W + H; x += 70) {
+    lines.push(`<line x1="${x}" y1="${H}" x2="${x + H}" y2="0" stroke="#ffffff" stroke-width="1"/>`);
+  }
+  return `
+  <rect width="${W}" height="${H}" fill="${NEON.ink}"/>
+  <circle cx="${W * 0.24}" cy="${H * 0.3}" r="560" fill="url(#glowGreen)"/>
+  <circle cx="${W * 0.78}" cy="${H * 0.66}" r="480" fill="url(#glowViolet)"/>
+  <g opacity="0.04">${lines.join("")}</g>
+  <rect width="${W}" height="${H}" fill="url(#vignette)"/>`;
+}
+
+// scene: which full-bleed statement is on screen -- these REPLACE each other (see buildPromoRevealFrames),
+// unlike highlightSvg's reveal flags which accumulate into one final layout.
+// scale: the current pop-in scale for the scene's content group (1 = settled).
+function promoSvg(scene, scale, logoRotationDeg) {
+  const W = 1080, H = 1920;
+  const s = (scale ?? 1).toFixed(3);
+  const cx = W / 2, cy = H * 0.42;
+
+  const rightLogoSize = 112, rightLogoX = W - 70 - rightLogoSize, rightLogoY = 70;
+  const rightLogoCx = rightLogoX + rightLogoSize / 2, rightLogoCy = rightLogoY + rightLogoSize / 2;
+
+  let content = "";
+  if (scene === "logo") {
+    content = `<g transform="translate(${cx},${cy}) scale(${s})">
+      <clipPath id="heroClip"><rect x="-140" y="-140" width="280" height="280" rx="60"/></clipPath>
+      <image href="${logoSrc()}" x="-140" y="-140" width="280" height="280" clip-path="url(#heroClip)" filter="url(#neonGlow)"/>
+    </g>`;
+  } else if (scene === "stopGuessing") {
+    content = `<g transform="translate(${cx},${cy}) scale(${s})" text-anchor="middle">
+      ${scrim(-520, -110, 1040, 270)}
+      <text y="-40" font-family="DejaVu Sans" font-size="108" font-weight="900" letter-spacing="-1" fill="#ffffff" filter="url(#neonGlow)">STOP</text>
+      <text y="90" font-family="DejaVu Sans" font-size="108" font-weight="900" letter-spacing="-1" fill="${NEON.violet}" filter="url(#neonGlow)">GUESSING.</text>
+    </g>`;
+  } else if (scene === "startWinning") {
+    content = `<g transform="translate(${cx},${cy}) scale(${s})" text-anchor="middle">
+      ${scrim(-520, -110, 1040, 270)}
+      <text y="-40" font-family="DejaVu Sans" font-size="108" font-weight="900" letter-spacing="-1" fill="#ffffff" filter="url(#neonGlow)">START</text>
+      <text y="90" font-family="DejaVu Sans" font-size="108" font-weight="900" letter-spacing="-1" fill="${NEON.green}" filter="url(#neonGlow)">WINNING.</text>
+    </g>`;
+  } else if (scene?.startsWith("feature")) {
+    const f = PROMO_FEATURES[Number(scene.slice(7))];
+    content = `<g transform="translate(${cx},${cy}) scale(${s})" text-anchor="middle">
+      ${scrim(-500, -75, 1000, 210)}
+      <text y="-10" font-family="DejaVu Sans" font-size="82" font-weight="900" letter-spacing="-0.5" fill="${NEON.green}" filter="url(#neonGlow)">${escapeXml(f.title)}</text>
+      <text y="70" font-family="DejaVu Sans" font-size="30" font-weight="600" fill="${NEON.textDim}">${escapeXml(f.body)}</text>
+    </g>`;
+  } else if (scene === "recap") {
+    content = `<g transform="translate(${cx},${cy}) scale(${s})" text-anchor="middle">
+      ${scrim(-500, -105, 1000, 200)}
+      <text y="-40" font-family="DejaVu Sans" font-size="80" font-weight="900" letter-spacing="-1" fill="#ffffff" filter="url(#neonGlow)">REAL SIGNALS.</text>
+      <text y="55" font-family="DejaVu Sans" font-size="80" font-weight="900" letter-spacing="-1" fill="${NEON.green}" filter="url(#neonGlow)">REAL RESULTS.</text>
+    </g>`;
+  } else if (scene === "cta") {
+    content = `<g transform="translate(${cx},${H * 0.46}) scale(${s})" text-anchor="middle">
+      ${scrim(-490, -95, 980, 355)}
+      <text y="-30" font-family="DejaVu Sans" font-size="72" font-weight="900" letter-spacing="-1" fill="#ffffff" filter="url(#neonGlow)">JOIN THE</text>
+      <text y="80" font-family="DejaVu Sans" font-size="72" font-weight="900" letter-spacing="-1" fill="${NEON.green}" filter="url(#neonGlow)">DISCORD →</text>
+      <text y="180" font-family="DejaVu Sans Mono" font-size="28" font-weight="600" fill="${NEON.textDim}">${escapeXml(DISCORD_INVITE_URL.replace(/^https?:\/\//, ""))}</text>
+      <text y="222" font-family="DejaVu Sans" font-size="22" fill="#8b93a1">Free to join. No card required.</text>
+    </g>`;
+  }
+
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+  ${neonDefs()}
+  ${neonBackground(W, H)}
+  <g transform="rotate(${(logoRotationDeg ?? 0).toFixed(1)} ${rightLogoCx} ${rightLogoCy})">
+    <clipPath id="logoClipRight"><rect x="${rightLogoX}" y="${rightLogoY}" width="${rightLogoSize}" height="${rightLogoSize}" rx="28"/></clipPath>
+    <image href="${logoSrc()}" x="${rightLogoX}" y="${rightLogoY}" width="${rightLogoSize}" height="${rightLogoSize}" clip-path="url(#logoClipRight)"/>
+  </g>
+  ${content}
+</svg>`;
+}
+
+// The static "one picture" -- not a captured video frame, its own standalone hero composition
+// (bold headline + all four features as glowing pill chips in a 2x2 grid + CTA) so it reads as a
+// complete, powerful image on its own rather than looking like a paused mid-cut of the video.
+function promoHeroSvg() {
+  const W = 1080, H = 1920;
+  const rightLogoSize = 112, rightLogoX = W - 70 - rightLogoSize, rightLogoY = 70;
+
+  const chipW = 460, chipH = 190, gap = 20;
+  const gridX = (W - chipW * 2 - gap) / 2, gridY = 700;
+  const chips = PROMO_FEATURES.map((f, i) => {
+    const x = gridX + (i % 2) * (chipW + gap);
+    const y = gridY + Math.floor(i / 2) * (chipH + gap);
+    return `
+    <rect x="${x}" y="${y}" width="${chipW}" height="${chipH}" rx="20" fill="rgba(2,4,7,0.65)" stroke="${NEON.green}" stroke-opacity="0.4" stroke-width="1.5"/>
+    <text x="${x + 28}" y="${y + 62}" font-family="DejaVu Sans" font-size="28" font-weight="800" letter-spacing="0.5" fill="${NEON.green}">${escapeXml(f.title)}</text>
+    <text x="${x + 28}" y="${y + 106}" font-family="DejaVu Sans" font-size="20" font-weight="600" fill="${NEON.textDim}">${escapeXml(wrapTwoLines(f.body, 26)[0])}</text>
+    <text x="${x + 28}" y="${y + 134}" font-family="DejaVu Sans" font-size="20" font-weight="600" fill="${NEON.textDim}">${escapeXml(wrapTwoLines(f.body, 26)[1] || "")}</text>`;
+  }).join("");
+
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+  ${neonDefs()}
+  ${neonBackground(W, H)}
+  <g>
+    <clipPath id="logoClipRight"><rect x="${rightLogoX}" y="${rightLogoY}" width="${rightLogoSize}" height="${rightLogoSize}" rx="28"/></clipPath>
+    <image href="${logoSrc()}" x="${rightLogoX}" y="${rightLogoY}" width="${rightLogoSize}" height="${rightLogoSize}" clip-path="url(#logoClipRight)"/>
+  </g>
+
+  <g text-anchor="middle">
+    ${scrim(60, 250, 960, 275)}
+    <text x="${W / 2}" y="330" font-family="DejaVu Sans" font-size="88" font-weight="900" letter-spacing="-1" fill="#ffffff" filter="url(#neonGlow)">REAL SIGNALS.</text>
+    <text x="${W / 2}" y="430" font-family="DejaVu Sans" font-size="88" font-weight="900" letter-spacing="-1" fill="${NEON.green}" filter="url(#neonGlow)">REAL RESULTS.</text>
+    <text x="${W / 2}" y="490" font-family="DejaVu Sans" font-size="28" font-weight="600" fill="${NEON.textDim}">Free crypto scanner. Every call verified.</text>
+  </g>
+
+  ${chips}
+
+  <g text-anchor="middle">
+    ${scrim(140, 1420, 800, 275)}
+    <text x="${W / 2}" y="1500" font-family="DejaVu Sans" font-size="64" font-weight="900" letter-spacing="-1" fill="#ffffff" filter="url(#neonGlow)">JOIN THE</text>
+    <text x="${W / 2}" y="1595" font-family="DejaVu Sans" font-size="64" font-weight="900" letter-spacing="-1" fill="${NEON.green}" filter="url(#neonGlow)">DISCORD →</text>
+    <text x="${W / 2}" y="1655" font-family="DejaVu Sans Mono" font-size="26" font-weight="600" fill="${NEON.textDim}">${escapeXml(DISCORD_INVITE_URL.replace(/^https?:\/\//, ""))}</text>
+  </g>
+</svg>`;
+}
+
+// Crude but sufficient word-wrap for the hero's feature-chip body text (fixed-width chips, no
+// need for real text-measurement -- DejaVu Sans body copy here averages close enough to
+// monospace-width-per-char for a character-count wrap to land cleanly at this font size).
+function wrapTwoLines(text, maxChars) {
+  const words = text.split(" ");
+  const lines = [""];
+  for (const w of words) {
+    const candidate = lines[lines.length - 1] ? `${lines[lines.length - 1]} ${w}` : w;
+    if (candidate.length > maxChars && lines.length < 2) lines.push(w);
+    else lines[lines.length - 1] = candidate;
+  }
+  return lines;
+}
+
+async function generatePromoImage() {
+  await ensureLogoSrcCached();
+  return sharp(Buffer.from(promoHeroSvg())).png().toBuffer();
+}
+
+// Same reveal-video shape as buildRevealFrames (a generator of {svg, holdMs}, rotation baked into
+// each frame at ROTATION_FRAME_MS granularity) -- kept as its own copy rather than a shared helper
+// because the two reveal sequences don't share a content model (highlight data vs. a fixed scene
+// list), and this is a one-off asset, not something worth building a shared abstraction for.
+const PROMO_VIDEO_MS = 15000;
+function* buildPromoRevealFrames() {
+  const ROTATION_FRAME_MS = 150;
+  const ROTATION_PERIOD_MS = 3000;
+  let clockMs = 0;
+  function* pushFrames(holdMs, scene, scale) {
+    const steps = Math.max(1, Math.round(holdMs / ROTATION_FRAME_MS));
+    const stepMs = holdMs / steps;
+    for (let i = 0; i < steps; i++) {
+      const logoRotationDeg = (clockMs / ROTATION_PERIOD_MS) * 360 % 360;
+      yield { svg: promoSvg(scene, scale, logoRotationDeg), holdMs: stepMs };
+      clockMs += stepMs;
+    }
+  }
+  // Small -> overshoot -> settle, not a linear fade -- three explicit scale steps read as a real
+  // "pop" even as discrete frames (unlike opacity, a scale bounce doesn't need many sub-frames to
+  // sell the motion; overshooting past 1.0 before settling is what makes it feel punchy).
+  const POP_SCALES = [0.72, 1.12, 1.0];
+  const POP_MS = 90;
+  function* sceneWithPop(totalMs, scene) {
+    for (const scale of POP_SCALES) yield* pushFrames(POP_MS, scene, scale);
+    const settledMs = totalMs - POP_MS * POP_SCALES.length;
+    if (settledMs > 0) yield* pushFrames(settledMs, scene, 1.0);
+  }
+
+  const beats = [
+    [900, "logo"],
+    [1700, "stopGuessing"],
+    [1700, "startWinning"],
+    [1400, "feature0"],
+    [1400, "feature1"],
+    [1400, "feature2"],
+    [1400, "feature3"],
+    [1700, "recap"]
+  ];
+  yield* pushFrames(300, "bare", 1);
+  let elapsed = 300;
+  for (const [ms, scene] of beats) {
+    yield* sceneWithPop(ms, scene);
+    elapsed += ms;
+  }
+  yield* sceneWithPop(PROMO_VIDEO_MS - elapsed, "cta");
+}
+
+async function generatePromoRevealFramePngs() {
+  await ensureLogoSrcCached();
+  const rendered = [];
+  for (const frame of buildPromoRevealFrames()) {
+    const png = await sharp(Buffer.from(frame.svg)).png().toBuffer();
+    rendered.push({ png, holdMs: frame.holdMs });
+  }
+  return rendered;
+}
+
+// No ticker/pctChange to work with here (unlike buildYoutubeCaption) -- this is the evergreen
+// "join the community" spot posted as a last-resort fallback when neither a real call nor a
+// live-mover clears MIN_FEATURE_PCT_CHANGE, so /shorts has something real to post instead of
+// going fully silent during a quiet stretch. Shared by both promo ad variants (the SVG hype-
+// trailer and the neon-sign photo ad) -- neither names a specific coin, so one caption fits both.
+function buildPromoYoutubeCaption() {
+  const title = "Free Crypto Signal Scanner — Real Alerts, Verified Results";
+  const description = [
+    "Live Buy/Sell alerts the moment they fire, every call logged and tracked to a real result, " +
+      "a free scanner covering 200+ pairs, and backtesting to check any signal against real history first.",
+    "",
+    `Real scans, real signals -- not financial advice. Join the Discord: ${DISCORD_INVITE_URL}`,
+    "",
+    "#crypto #cryptotrading #tradingsignals #Shorts"
+  ].join("\n");
+  return { title, description };
+}
+
+// The second, rotating ad variant -- a photorealistic neon-sign-in-the-rain scene, deliberately
+// nothing like the SVG hype-trailer's look, so repeat viewers during a quiet stretch don't see
+// the identical ad every time. Unlike the hype-trailer (generated fresh from SVG on every call),
+// this is a fixed, pre-rendered asset: the CTA text is already burned into both files (see
+// scripts/compose-neon-photo.js for how the base video was made, and the one-time bake that added
+// the clickable-looking Discord URL on top of it) -- there's no per-request generation cost at
+// all, just a disk read, since the content never changes and re-running that compositing pipeline
+// on every quiet check would be pure waste.
+const NEON_SIGN_AD_IMAGE_PATH = path.join(__dirname, "..", "..", "assets", "promo-neon-sign.png");
+const NEON_SIGN_AD_VIDEO_PATH = path.join(__dirname, "..", "..", "assets", "promo-neon-sign.mp4");
+
+function getNeonSignAdImage() {
+  return fs.readFileSync(NEON_SIGN_AD_IMAGE_PATH);
+}
+
+function getNeonSignAdVideo() {
+  return fs.readFileSync(NEON_SIGN_AD_VIDEO_PATH);
+}
+
 module.exports = {
   findMover, generateShortHtml, generateShortImage, generateHighlightImage,
   buildCallHighlight, buildFallbackHighlight, buildYoutubeCaption, DISCORD_INVITE_URL,
-  buildRevealFrames, generateRevealFramePngs
+  buildRevealFrames, generateRevealFramePngs,
+  generatePromoImage, generatePromoRevealFramePngs, buildPromoYoutubeCaption,
+  getNeonSignAdImage, getNeonSignAdVideo
 };
