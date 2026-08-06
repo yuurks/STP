@@ -5,4 +5,5 @@ data/movers.json
 data/movers-short.html
 data/youtube-quota.json
 data/tokenPeaks.json
+data/shortsErrors.json
 .claude/settings.local.json
