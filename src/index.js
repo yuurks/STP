@@ -398,7 +398,15 @@ async function postShortsHighlight(highlight, channel, guildId) {
     // this is just the video/YouTube half failing -- still worth a visible flag rather than a
     // silent gap, since it's otherwise indistinguishable from the scheduler simply not being due.
     console.error(`Shorts video generation failed: ${err.message}`);
-    await channel.send(`⚠️ Video/YouTube step failed for this Short (image above already posted) -- ${err.message}`).catch(() => {});
+    // err.message truncated -- a long/verbose error (a raw API error body, a stack-trace-like
+    // string) concatenated in full could push this past Discord's message length limit and make
+    // the warning send itself throw, which used to be swallowed by a bare .catch(() => {}) --
+    // silently trading "no video posted" for "no video AND no warning," the exact silent-gap
+    // failure mode this whole message exists to prevent. Now logs a second time if THAT send
+    // fails too, so at minimum it's not a total dead end even if Discord rejects it outright.
+    const safeMessage = err.message.length > 300 ? err.message.slice(0, 300) + "…" : err.message;
+    await channel.send(`⚠️ Video/YouTube step failed for this Short (image above already posted) -- ${safeMessage}`)
+      .catch(sendErr => console.error(`Shorts failure warning ALSO failed to send: ${sendErr.message}`));
   }
 }
 
@@ -470,7 +478,12 @@ async function postPromoAd(channel, guildId) {
     }
   } catch (err) {
     console.error(`Promo ad video generation failed: ${err.message}`);
-    await channel.send(`⚠️ Video/YouTube step failed for this ad (image above already posted) -- ${err.message}`).catch(() => {});
+    // Same reasoning as postShortsHighlight's equivalent catch -- truncate err.message so a long/
+    // verbose error can't push this past Discord's length limit and make the warning itself throw,
+    // and log a second time if that send fails anyway rather than swallowing it silently.
+    const safeMessage = err.message.length > 300 ? err.message.slice(0, 300) + "…" : err.message;
+    await channel.send(`⚠️ Video/YouTube step failed for this ad (image above already posted) -- ${safeMessage}`)
+      .catch(sendErr => console.error(`Promo ad failure warning ALSO failed to send: ${sendErr.message}`));
   }
 }
 
