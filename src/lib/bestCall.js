@@ -153,7 +153,13 @@ async function tryFetchRealOhlc(entry, currentPrice, livePairAddress) {
     const lastClose = candles[candles.length - 1].close;
     if (currentPrice > 0 && Math.abs(lastClose - currentPrice) / currentPrice > MAX_PRICE_DIVERGENCE_RATIO) {
       console.error(`Best-call GeckoTerminal data for ${entry.symbol} (${pairAddress}) disagrees with confirmed current price (pool close ${lastClose} vs ${currentPrice}) -- likely a stale pairAddress from before a migration, skipping enrichment`);
-      return null;
+      // Distinct from the other skip cases below (thin pool, not enough history, fetch error) --
+      // those just mean "no chart available," the price itself is still trusted. This one means
+      // an independent data source actively DISAGREES with the price this candidate's whole
+      // pctChange is built on, which is a reason to distrust the number itself, not just skip
+      // drawing it. Signaled distinctly so the caller can reject the whole candidate, not just
+      // fall back to a 2-point line for it.
+      return { divergent: true };
     }
 
     const rawEntryIndex = candles.findIndex(c => c.time >= entry.timestamp);
@@ -263,24 +269,42 @@ async function bestFromDexScreenerSource(guildId, source, getHistory, recentSymb
     });
   }
 
-  const best = pickBestWithRotation(candidates, recentSymbols);
-  if (!best) return null;
-  const winningEntry = best._entry;
-  const winningLivePairAddress = best._livePairAddress;
-  delete best._entry;
-  delete best._livePairAddress;
+  // Only ever spends a real-candle lookup on whichever candidate is CURRENTLY the top pick --
+  // never on every eligible one, so this stays cheap regardless of how much history exists. But
+  // a candidate whose own real candle data actively DISAGREES with its current price isn't just
+  // missing a chart -- that's a reason to distrust the number itself. Confirmed against a real
+  // incident: a "SHDW" alert claiming +490,960% actually got featured and posted to YouTube --
+  // Solana ticker symbols aren't unique, so this was logged against a different, ticker-colliding
+  // token, not the well-known Shadow Token, and its own real candle history disagreed hard enough
+  // with DexScreener's snapshot to trip tryFetchRealOhlc's divergence check -- yet it still got
+  // shown, with a fabricated-looking 2-point line, because that check only ever skipped the
+  // chart, never the whole candidate. A divergent candidate now loses its spot entirely and the
+  // next-best remaining one is tried instead, capped so a run of bad candidates can't turn this
+  // into an unbounded number of GeckoTerminal calls.
+  const MAX_ENRICHMENT_ATTEMPTS = 5;
+  let pool = candidates;
+  for (let attempt = 0; attempt < MAX_ENRICHMENT_ATTEMPTS; attempt++) {
+    const best = pickBestWithRotation(pool, recentSymbols);
+    if (!best) return null;
+    const winningEntry = best._entry;
+    const winningLivePairAddress = best._livePairAddress;
+    delete best._entry;
+    delete best._livePairAddress;
 
-  // Only the single winning pick ever gets a real-candle lookup -- never spent on every
-  // eligible candidate, so this stays cheap regardless of how much history exists.
-  if (best && winningEntry) {
+    if (!winningEntry) return best; // shouldn't happen, but stay safe rather than loop forever
+
     const enriched = await tryFetchRealOhlc(winningEntry, best.currentPrice, winningLivePairAddress);
+    if (enriched?.divergent) {
+      pool = pool.filter(c => c !== best);
+      continue;
+    }
     if (enriched) {
       best.ohlc = enriched.ohlc;
       best.entryIndex = enriched.entryIndex;
     }
+    return best;
   }
-
-  return best;
+  return null; // exhausted attempts -- nothing trustworthy enough to feature this pass
 }
 
 // Returns the single best-performing eligible call across all four sources, or null if nothing
