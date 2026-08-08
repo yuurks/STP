@@ -653,9 +653,10 @@ function heroCardSvg({
         <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
       </filter>
       <filter id="${pctGlowId}" x="-60%" y="-100%" width="220%" height="300%">
-        <feGaussianBlur in="SourceGraphic" stdDeviation="55" result="wideBlur"/>
+        <feMorphology in="SourceGraphic" operator="dilate" radius="6" result="dilated"/>
+        <feGaussianBlur in="dilated" stdDeviation="55" result="wideBlur"/>
         <feColorMatrix in="wideBlur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.22 0" result="wide"/>
-        <feGaussianBlur in="SourceGraphic" stdDeviation="24" result="tightBlur"/>
+        <feGaussianBlur in="dilated" stdDeviation="24" result="tightBlur"/>
         <feColorMatrix in="tightBlur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.5 0" result="tight"/>
         <feMerge><feMergeNode in="wide"/><feMergeNode in="tight"/><feMergeNode in="SourceGraphic"/></feMerge>
       </filter>
@@ -695,14 +696,18 @@ function heroCardSvg({
         <stop offset="100%" stop-color="${TRUST_CYAN}" stop-opacity="0"/>
       </radialGradient>
       <pattern id="${bgId}dither" width="${ditherTile}" height="${ditherTile}" patternUnits="userSpaceOnUse">${ditherRects}</pattern>
-      <clipPath id="${bgId}clip"><rect x="${x}" y="${topbarIconY + topbarIconSize + 25}" width="${w}" height="${h - (topbarIconY + topbarIconSize + 25 - y)}" rx="65"/></clipPath>
+      <linearGradient id="${bgId}ditherFade" gradientUnits="userSpaceOnUse" x1="0" y1="${topbarIconY + topbarIconSize}" x2="0" y2="${topbarIconY + topbarIconSize + 70}">
+        <stop offset="0" stop-color="#000000"/>
+        <stop offset="1" stop-color="#ffffff"/>
+      </linearGradient>
+      <mask id="${bgId}ditherMask"><rect x="${x}" y="${y}" width="${w}" height="${h}" fill="url(#${bgId}ditherFade)"/></mask>
     </defs>
 
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="65" fill="none" stroke="${GLOW_GREEN}" stroke-opacity="0.3" stroke-width="7" filter="url(#${glowId})"/>
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="65" fill="#070b0a"/>
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="65" fill="url(#${bgId}greenTint)"/>
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="65" fill="url(#${bgId}cyanTint)"/>
-    <g clip-path="url(#${bgId}clip)"><rect x="${x}" y="${y}" width="${w}" height="${h}" fill="url(#${bgId}dither)"/></g>
+    <g mask="url(#${bgId}ditherMask)"><rect x="${x}" y="${y}" width="${w}" height="${h}" fill="url(#${bgId}dither)"/></g>
     <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="65" fill="none" stroke="#1c2b25" stroke-width="1.5"/>
 
     ${showTopbar ? popGroup(x + w / 2, topbarIconY + 32, topbarScale, `

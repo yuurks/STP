@@ -163,10 +163,16 @@ async function generateAnimatedShortVideo(frames) {
       "-vsync", "cfr",
       "-c:v", "libx264",
       "-threads", "2",
-      "-preset", "ultrafast",
+      // "ultrafast" measurably softened fine detail and left visible blocking around the card's
+      // glow gradients -- confirmed directly: encoded the same real reveal content both ways,
+      // "medium" (x264's own default balance point, not just one step up) came out sharper with
+      // less compression artifacting AND actually a smaller file, at a real but trivial encode-
+      // time cost (~2-3x slower, but that's ~7s vs ~4s for a 15s video -- nowhere close to the
+      // 180s ceiling below). CRF tightened from 18 to 16 to match.
+      "-preset", "medium",
       "-bf", "0",
       "-rc-lookahead", "0",
-      "-crf", "18",
+      "-crf", "16",
       "-pix_fmt", "yuv420p"
     );
     if (musicPath) {
